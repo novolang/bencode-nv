@@ -1,0 +1,233 @@
+// bencvalue — the four types, and the dictionary that keeps its order.
+//
+// Every body is a `todo()`.  The signatures are the design, and the
+// compiler checks them as claims; see the README for the stamp.
+//
+// BENCODE IS FOUR TYPES AND NOTHING ELSE.  An integer, written
+// `i<digits>e`.  A byte string, written `<length>:<bytes>`.  A list,
+// written `l<values>e`.  A dictionary, written `d<key><value>…e` whose
+// keys are byte strings.  There is no boolean, no null, no float and no
+// nesting rule beyond those.  A torrent's `private` flag is the integer
+// 1, and its `creation date` is Unix seconds as an integer.
+//
+// A BYTE STRING IS BYTES AND NOT TEXT.  BEP 3 says nothing about the
+// encoding of a byte string, and a torrent's `pieces` member is a
+// concatenation of twenty-byte SHA-1 digests that is not text in any
+// encoding.  So `BencBytes` carries `Bytes`, and `as_str` is a separate
+// accessor a caller reaches for when it knows the member is a name.  A
+// package that handed back `Str` everywhere would hand back a `pieces`
+// truncated at the first zero byte.
+//
+// A DICTIONARY KEEPS THE ORDER IT WAS READ IN.  BEP 3 requires a WRITER
+// to sort keys as raw byte strings, and files in the wild do not always.
+// Sorting on read would change the bytes a re-encoding produces, which
+// changes a torrent's info-hash, which changes what the torrent
+// identifies.  So nothing here sorts; `bencwrite.canonical` is where
+// sorting happens, deliberately and with its consequence stated.
+
+// A bencode value.
+//
+// ```novo
+// use bencvalue
+//
+// fn main() [io]
+//     println(bencvalue.type_name(BencInt(7)))   // integer
+// ```
+pub enum BencValue
+    // `i<digits>e`.  Signed, and this package holds it in a 64-bit
+    // integer; a number too large for that is `BencIntegerOverflow` at
+    // the reader rather than a wrapped value.
+    BencInt(v: Int)
+    // `<length>:<bytes>`.  Bytes, not text.
+    BencBytes(v: Bytes)
+    // `l<values>e`.
+    BencList(items: [BencValue])
+    // `d<key><value>…e`, in the order the file has them.
+    BencDict(entries: [BencEntry])
+
+// One entry of a dictionary.
+//
+// The key is `Bytes` and not `Str` for the same reason a value is:
+// BEP 3 permits any byte string as a key.  In practice every key in a
+// torrent is ASCII, and `key_str` is the accessor that says so.
+pub struct BencEntry
+    // The key, as the file had it.
+    key: Bytes
+    // The value.
+    value: BencValue
+
+// The type's name, as BEP 3 writes it: `"integer"`, `"string"`,
+// `"list"`, `"dictionary"`.
+//
+// What `BencWrongType` reports.
+pub fn type_name(v: BencValue) -> Str []
+    todo("bencode-nv.bencvalue.type_name")
+
+// A byte-string value from text.
+//
+// The constructor a caller building a dictionary by hand uses, since
+// every key it writes is a name.
+//
+// ```novo
+// use bencvalue
+//
+// fn main() [io]
+//     println(bencvalue.type_name(bencvalue.text("ubuntu.iso")))   // string
+// ```
+pub fn text(s: Str) -> BencValue []
+    todo("bencode-nv.bencvalue.text")
+
+// One dictionary entry, with the key given as text.
+pub fn entry(key: Str, value: BencValue) -> BencEntry []
+    todo("bencode-nv.bencvalue.entry")
+
+// An empty dictionary.
+//
+// ```novo
+// use bencvalue
+//
+// fn main() [io]
+//     println("${bencvalue.len(bencvalue.dict())}")   // 0
+// ```
+pub fn dict() -> BencValue []
+    todo("bencode-nv.bencvalue.dict")
+
+// A dictionary from its entries, in the order given.
+//
+// Nothing is sorted.  `bencwrite.canonical` is where that happens.
+pub fn dict_of(entries: [BencEntry]) -> BencValue []
+    todo("bencode-nv.bencvalue.dict_of")
+
+// `d` with one more entry at the end.
+pub fn append(d: BencValue, key: Str, value: BencValue) -> BencValue []
+    todo("bencode-nv.bencvalue.append")
+
+// How many entries a dictionary has, or how many elements a list has;
+// `0` for an integer or a byte string.
+pub fn len(v: BencValue) -> Int []
+    todo("bencode-nv.bencvalue.len")
+
+// The integer a value holds, or `BencWrongType`.
+//
+// ```novo
+// use bencvalue
+//
+// fn main() [io]
+//     match bencvalue.as_int(BencInt(7))
+//         Ok(n)  => println("${n}")   // 7
+//         Err(e) => println(e.message())
+// ```
+pub fn as_int(v: BencValue) -> Result<Int, BencFault> []
+    todo("bencode-nv.bencvalue.as_int")
+
+// The bytes a value holds, or `BencWrongType`.
+pub fn as_bytes(v: BencValue) -> Result<Bytes, BencFault> []
+    todo("bencode-nv.bencvalue.as_bytes")
+
+// The bytes a value holds, as text, or `BencWrongType`.
+//
+// Nothing validates UTF-8: BEP 3 says nothing about the encoding, and a
+// torrent's `encoding` member exists precisely because names are not
+// always UTF-8.  A caller that needs to know reads that member and
+// decides.
+//
+// ```novo
+// use bencvalue
+//
+// fn main() [io]
+//     match bencvalue.as_str(bencvalue.text("ubuntu.iso"))
+//         Ok(s)  => println(s)   // ubuntu.iso
+//         Err(e) => println(e.message())
+// ```
+pub fn as_str(v: BencValue) -> Result<Str, BencFault> []
+    todo("bencode-nv.bencvalue.as_str")
+
+// The list a value holds, or `BencWrongType`.
+pub fn as_list(v: BencValue) -> Result<[BencValue], BencFault> []
+    todo("bencode-nv.bencvalue.as_list")
+
+// The dictionary entries a value holds, or `BencWrongType`.
+pub fn as_dict(v: BencValue) -> Result<[BencEntry], BencFault> []
+    todo("bencode-nv.bencvalue.as_dict")
+
+// An entry's key as text.
+//
+// Every key in a torrent is ASCII in practice; this is the accessor
+// that says so without every caller converting.
+pub fn key_str(e: BencEntry) -> Str []
+    todo("bencode-nv.bencvalue.key_str")
+
+// The value under a key, or `BencNoSuchKey`.
+//
+// A reader never meets a dictionary with two of one key — the reader
+// refuses it — so there is no first-or-last question here.
+//
+// ```novo
+// use bencvalue
+//
+// fn main() [io]
+//     match bencvalue.get(bencvalue.dict(), "announce")
+//         Ok(_)  => println("this cannot happen — the dictionary is empty")
+//         Err(e) => println(e.message())
+// ```
+pub fn get(v: BencValue, key: Str) -> Result<BencValue, BencFault> []
+    todo("bencode-nv.bencvalue.get")
+
+// The same lookup as an option, for a caller with a default in hand.
+//
+// What every optional torrent member is read with: `comment`,
+// `created by`, `encoding` and `private` are all absent from real
+// files.
+pub fn lookup(v: BencValue, key: Str) -> ?BencValue []
+    todo("bencode-nv.bencvalue.lookup")
+
+// Whether the dictionary has this key.
+pub fn has(v: BencValue, key: Str) -> Bool []
+    todo("bencode-nv.bencvalue.has")
+
+// Every key of a dictionary, as text, in the order the file had them.
+//
+// ```novo
+// use bencvalue
+//
+// fn main() [io]
+//     println("${list.len(bencvalue.keys(bencvalue.dict()))}")   // 0
+// ```
+pub fn keys(v: BencValue) -> [Str] []
+    todo("bencode-nv.bencvalue.keys")
+
+// Whether a dictionary's keys are in the order BEP 3 requires a writer
+// to put them in: ascending as raw byte strings.
+//
+// A QUESTION AND NOT A RULE AT THE READER.  Files in the wild are not
+// always sorted, and a reader that refused one would refuse torrents
+// every client accepts.
+//
+// Compared as raw bytes, which is not the same as comparing as text in
+// any locale: `"Z"` sorts before `"a"` because `0x5A` is below `0x61`,
+// and a sort that used a locale would produce a different file.
+//
+// ```novo
+// use bencvalue
+//
+// fn main() [io]
+//     println("${bencvalue.keys_sorted(bencvalue.dict())}")   // true
+// ```
+pub fn keys_sorted(v: BencValue) -> Bool []
+    todo("bencode-nv.bencvalue.keys_sorted")
+
+// The value at a path of dictionary keys, or `None`.
+//
+// Keys only.  A list index is not a key, and a caller walking into a
+// list takes the `BencList` and indexes it.
+//
+// ```novo
+// use bencvalue
+//
+// fn main() [io]
+//     match bencvalue.path(bencvalue.dict(), ["info", "name"])
+//         Some(_) => println("found")
+//         None    => println("no such path")
+// ```
+pub fn path(v: BencValue, keys: [Str]) -> ?BencValue []
+    todo("bencode-nv.bencvalue.path")

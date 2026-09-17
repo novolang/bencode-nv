@@ -1,0 +1,149 @@
+// bencwrite — a value back to bytes, and the ordering rule.
+//
+// Every body is a `todo()`.  The signatures are the design, and the
+// compiler checks them as claims; see the README for the stamp.
+//
+// BENCODE IS ALMOST CANONICAL ALREADY.  There is one way to write an
+// integer, one way to write a byte string, and one way to write a list.
+// Everything the format could have left open, BEP 3 closed: no leading
+// zeros, no negative zero, no whitespace, no escapes.  A value written
+// twice is the same bytes twice.
+//
+// THE ONE EXCEPTION IS A DICTIONARY'S ORDER, and BEP 3 resolves it by
+// requiring a writer to sort the keys as raw byte strings.  "As raw
+// byte strings" is doing real work: `"Z"` sorts before `"a"` because
+// `0x5A` is below `0x61`, so a writer that sorted with a locale's
+// collation would produce a different file — and for a torrent, a
+// different info-hash.
+//
+// SO `write` SORTS AND `write_as_is` DOES NOT, and both are needed.
+// Producing a new torrent means sorting, because that is the rule.
+// Reproducing a file somebody else wrote means NOT sorting, because the
+// file's own order is what its info-hash was taken over.  A single
+// function would have made one of those two jobs impossible, and the
+// one it would have made impossible is the one that matters: a client
+// that re-sorted a torrent it had read would change its identity.
+//
+// The safest route for that second job is not this module at all.  It
+// is `bencread.slice`, which hands back the original bytes and cannot
+// differ from them.
+
+// How many bytes the value will occupy.
+//
+// Computed, not produced.  The number a caller sizing a buffer needs,
+// and the same for `write` and `write_as_is` — sorting changes the
+// order of the bytes and not how many there are.
+//
+// ```novo
+// use bencvalue
+// use bencwrite
+//
+// fn main() [io]
+//     println("${bencwrite.encoded_len(BencInt(7))}")   // 3
+// ```
+pub fn encoded_len(v: BencValue) -> Int []
+    todo("bencode-nv.bencwrite.encoded_len")
+
+// The value's bytes, with every dictionary's keys sorted as raw byte
+// strings.
+//
+// BEP 3's rule, applied.  What a program producing a new torrent uses.
+//
+// ```novo
+// use std.bytes
+// use bencvalue
+// use bencwrite
+//
+// fn main() [io]
+//     println(bytes.to_str(bencwrite.write(BencInt(7))))   // i7e
+// ```
+pub fn write(v: BencValue) -> Bytes []
+    todo("bencode-nv.bencwrite.write")
+
+// The value's bytes, with every dictionary left in the order it is in.
+//
+// What a program reproducing a file somebody else wrote uses.  A client
+// that re-sorted a torrent it had read would change its info-hash and
+// therefore its identity, so this is not a convenience: it is the
+// correct function for that job.
+//
+// ```novo
+// use std.bytes
+// use bencvalue
+// use bencwrite
+//
+// fn main() [io]
+//     println(bytes.to_str(bencwrite.write_as_is(bencvalue.dict())))   // de
+// ```
+pub fn write_as_is(v: BencValue) -> Bytes []
+    todo("bencode-nv.bencwrite.write_as_is")
+
+// The value with every dictionary's keys sorted, at every depth.
+//
+// The sort by itself, so a caller can see what `write` will do and
+// compare the result against what it had.
+//
+// ```novo
+// use bencvalue
+// use bencwrite
+//
+// fn main() [io]
+//     println("${bencvalue.keys_sorted(bencwrite.canonical(bencvalue.dict()))}")
+// ```
+pub fn canonical(v: BencValue) -> BencValue []
+    todo("bencode-nv.bencwrite.canonical")
+
+// Whether a buffer is already exactly what `write` would produce for
+// the value it holds.
+//
+// False for a buffer that does not parse at all.  THE QUESTION A
+// TORRENT TOOL ASKS BEFORE IT OFFERS TO REWRITE ANYTHING, because a
+// file that answers false will change its info-hash if it is ever
+// re-encoded.
+//
+// ```novo
+// use std.bytes
+// use bencwrite
+//
+// fn main() [io]
+//     println("${bencwrite.is_canonical(bytes.from_str("i7e"))}")   // true
+// ```
+pub fn is_canonical(src: Bytes) -> Bool []
+    todo("bencode-nv.bencwrite.is_canonical")
+
+// The byte offset of the first place a buffer differs from its
+// canonical form, or `None` when it does not.
+//
+// What a message says instead of "this file is not canonical": the
+// place, so somebody can look at it.  `None` also for a buffer that
+// does not parse, because a file that is not bencode is not
+// non-canonical bencode.
+//
+// ```novo
+// use std.bytes
+// use bencwrite
+//
+// fn main() [io]
+//     match bencwrite.first_difference(bytes.from_str("i7e"))
+//         Some(n) => println("differs at ${n}")
+//         None    => println("already canonical")
+// ```
+pub fn first_difference(src: Bytes) -> ?Int []
+    todo("bencode-nv.bencwrite.first_difference")
+
+// Whether one key sorts before another by BEP 3's rule: as raw byte
+// strings, unsigned, shorter first on a common prefix.
+//
+// Exposed because it is the one comparison a caller must agree with to
+// produce the same file, and because `"Z" < "a"` surprises everybody
+// who expects a locale.
+//
+// ```novo
+// use bencwrite
+//
+// fn main() [io]
+//     println("${bencwrite.key_before("Z", "a")}")        // true
+//     println("${bencwrite.key_before("info", "name")}")  // true
+// ```
+pub fn key_before(a: Str, b: Str) -> Bool []
+    todo("bencode-nv.bencwrite.key_before")

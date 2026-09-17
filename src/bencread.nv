@@ -1,0 +1,276 @@
+// bencread — bytes to a value, and bytes to a value that remembers
+// where it was.
+//
+// Every body is a `todo()`.  The signatures are the design, and the
+// compiler checks them as claims; see the README for the stamp.
+//
+// TWO READERS, AND CHOOSING BETWEEN THEM IS THE DECISION THIS MODULE
+// PUBLISHES.
+//
+// `read` answers a `BencValue`: the four types, nested, and nothing
+// else.  It is what a caller that wants the CONTENTS of a file uses.
+//
+// `read_tree` answers a `BencTree`: the same values in an arena of
+// numbered nodes, each carrying the half-open byte range it occupied in
+// the buffer it was read from.  It is what a caller that has to
+// reproduce or hash the ORIGINAL BYTES uses.
+//
+// WHY THAT SECOND READER HAS TO EXIST.  A torrent's info-hash is the
+// SHA-1 of its `info` dictionary — not of the values in it, of the
+// BYTES.  Re-encoding those values and hashing the result gives the
+// right answer only if the file was written canonically, and files in
+// the wild are not always: a dictionary whose keys are out of order, an
+// integer nobody would write that way, a client that appended a member
+// after sorting.  Any of those produces a different hash, and a
+// different hash is a different torrent — the client connects to a
+// swarm nobody is in and reports nothing wrong.
+//
+// So the span is not an optimisation.  It is the only way to get the
+// question right, and `benctorrent.info_span` is the function the whole
+// arrangement exists for.
+//
+// THE ARENA, NOT A TREE OF STRUCTS.  Nodes are numbered and children
+// are numbers, so a node's span is a lookup rather than a walk, a
+// caller can hold a node without holding the tree, and the whole
+// structure is one allocation.  It is the shape xml-nv's tree takes,
+// for the same reasons.
+
+// What a reader is configured with.
+pub struct BencLimits
+    // How deep a list or a dictionary may nest.  A list head costs one
+    // byte and opens a level, so a reader without a limit is a stack
+    // overflow that arrives as a short message — and a torrent file is
+    // something a stranger sends you.
+    max_depth: Int
+    // The largest byte string the reader will accept.  A declared
+    // length is attacker-controlled, so a reader should refuse before
+    // it allocates.
+    max_string_bytes: Int
+    // The largest number of values the reader will build.
+    max_values: Int
+
+// The limits a reader uses when none are given: sixty-four levels,
+// strings up to 64 MiB, and a million values.
+//
+// The string limit is generous because a torrent's `pieces` member is
+// genuinely large: twenty bytes per piece, and a large torrent has
+// hundreds of thousands of pieces.
+//
+// ```novo
+// use bencread
+//
+// fn main() [io]
+//     println("${bencread.default_limits().max_depth}")   // 64
+// ```
+pub fn default_limits() -> BencLimits []
+    todo("bencode-nv.bencread.default_limits")
+
+// One value from a whole buffer.
+//
+// `BencTrailingBytes` when the buffer is longer than the value, because
+// a caller handing over one buffer meant one value and silently
+// ignoring the rest is how a truncated file looks like a good one.
+//
+// ```novo
+// use std.bytes
+// use bencread
+// use bencvalue
+//
+// fn main() [io]
+//     match bencread.read(bytes.from_str("i7e"))
+//         Ok(v)  => println(bencvalue.type_name(v))   // integer
+//         Err(e) => println(e.message())
+// ```
+pub fn read(src: Bytes) -> Result<BencValue, BencFault> []
+    todo("bencode-nv.bencread.read")
+
+// The same, under limits the caller chose.
+pub fn read_with(src: Bytes, limits: BencLimits) -> Result<BencValue, BencFault> []
+    todo("bencode-nv.bencread.read_with")
+
+// One value from the front of a buffer, leaving the rest.
+//
+// For a caller reading values back to back, which is what a peer
+// protocol's extension messages are.
+//
+// ```novo
+// use std.bytes
+// use bencread
+//
+// fn main() [io]
+//     match bencread.read_prefix(bytes.from_str("i7ei8e"))
+//         Ok(p)  => println("${p.consumed}")   // 3
+//         Err(e) => println(e.message())
+// ```
+pub fn read_prefix(src: Bytes) -> Result<BencPrefix, BencFault> []
+    todo("bencode-nv.bencread.read_prefix")
+
+// One value taken off the front of a buffer.
+pub struct BencPrefix
+    // The value.
+    value: BencValue
+    // How many bytes it occupied, so the next value starts there.
+    consumed: Int
+
+// Whether a buffer is a bencode value this reader accepts, with no
+// value built.
+//
+// The same walk with no allocation for the values, for a caller
+// checking a file it is not going to read.
+pub fn validate(src: Bytes) -> Result<Bool, BencFault> []
+    todo("bencode-nv.bencread.validate")
+
+// A half-open byte range in the buffer the reader was handed.
+//
+// Offsets from the start of that buffer, so a caller slices with them
+// directly.
+pub struct BencSpan
+    // The first byte.
+    from: Int
+    // One past the last byte.
+    to: Int
+
+// One node of a spanned tree.
+pub struct BencNode
+    // `"integer"`, `"string"`, `"list"` or `"dictionary"`.
+    kind: Str
+    // The bytes this value occupied, its opening `i`, `l` or `d` and
+    // its closing `e` included.
+    span: BencSpan
+    // The integer, for an integer node; `0` otherwise.
+    int_value: Int
+    // The bytes, for a string node; empty otherwise.
+    bytes_value: Bytes
+    // The node numbers of a list's elements or a dictionary's values,
+    // in order; empty otherwise.
+    children: [Int]
+    // A dictionary's keys, in order, the same length as `children`;
+    // empty otherwise.
+    keys: [Bytes]
+
+// A value read with every node's byte range kept.
+pub struct BencTree
+    // The nodes, numbered by their position in this list.
+    nodes: [BencNode]
+    // The bytes the tree was read from, so a span can be sliced without
+    // the caller keeping the buffer beside the tree.
+    source: Bytes
+
+// One value from a whole buffer, with every node's span kept.
+//
+// ```novo
+// use std.bytes
+// use bencread
+//
+// fn main() [io]
+//     match bencread.read_tree(bytes.from_str("i7e"))
+//         Ok(t)  => println("${bencread.root(t)}")   // 0
+//         Err(e) => println(e.message())
+// ```
+pub fn read_tree(src: Bytes) -> Result<BencTree, BencFault> []
+    todo("bencode-nv.bencread.read_tree")
+
+// The same, under limits the caller chose.
+pub fn read_tree_with(src: Bytes, limits: BencLimits) -> Result<BencTree, BencFault> []
+    todo("bencode-nv.bencread.read_tree_with")
+
+// The node number of the tree's root.
+pub fn root(t: BencTree) -> Int []
+    todo("bencode-nv.bencread.root")
+
+// How many nodes the tree has.
+pub fn node_count(t: BencTree) -> Int []
+    todo("bencode-nv.bencread.node_count")
+
+// The node at a number, or `None`.
+pub fn node(t: BencTree, index: Int) -> ?BencNode []
+    todo("bencode-nv.bencread.node")
+
+// The node number of a dictionary node's value for a key, or `None`.
+//
+// ```novo
+// use std.bytes
+// use bencread
+//
+// fn main() [io]
+//     match bencread.read_tree(bytes.from_str("de"))
+//         Err(e) => println(e.message())
+//         Ok(t)  =>
+//             match bencread.child(t, bencread.root(t), "info")
+//                 Some(_) => println("found")
+//                 None    => println("no such key")
+// ```
+pub fn child(t: BencTree, index: Int, key: Str) -> ?Int []
+    todo("bencode-nv.bencread.child")
+
+// The node number at a path of dictionary keys, or `None`.
+//
+// `["info"]` on a torrent is the node whose span the info-hash is taken
+// over.
+pub fn node_at(t: BencTree, keys: [Str]) -> ?Int []
+    todo("bencode-nv.bencread.node_at")
+
+// The bytes a node occupied.
+//
+// THE FUNCTION THE SPANNED READER EXISTS FOR.  A slice of the original
+// buffer, so hashing it hashes what the file said and not what a
+// re-encoding would say.
+//
+// ```novo
+// use std.bytes
+// use bencread
+//
+// fn main() [io]
+//     match bencread.read_tree(bytes.from_str("i7e"))
+//         Err(e) => println(e.message())
+//         Ok(t)  => println("${bytes.len(bencread.slice(t, bencread.root(t)))}")   // 3
+// ```
+pub fn slice(t: BencTree, index: Int) -> Bytes []
+    todo("bencode-nv.bencread.slice")
+
+// A node as a plain value, with its span dropped.
+//
+// The bridge between the two readers, for a caller that took the tree
+// to get one span and wants ordinary values for the rest.
+pub fn value_of(t: BencTree, index: Int) -> BencValue []
+    todo("bencode-nv.bencread.value_of")
+
+// The byte range of the value at a path of dictionary keys, without
+// building a tree at all.
+//
+// ONE SCAN AND NO ALLOCATION, which is what a program that only wants
+// an info-hash out of a large torrent should pay.  A torrent's piece
+// table is megabytes and a caller hashing the `info` dictionary has no
+// use for it as values.
+//
+// `None` when the path is not there.
+//
+// ```novo
+// use std.bytes
+// use bencread
+//
+// fn main() [io]
+//     match bencread.span_at(bytes.from_str("de"), ["info"])
+//         Err(e)      => println(e.message())
+//         Ok(None)    => println("no info dictionary")
+//         Ok(Some(s)) => println("${s.from}..${s.to}")
+// ```
+pub fn span_at(src: Bytes, keys: [Str]) -> Result<?BencSpan, BencFault> []
+    todo("bencode-nv.bencread.span_at")
+
+// The bytes around an offset, as printable text with the unprintable
+// ones as `.`, for a diagnostic.
+//
+// Bencode has no lines, so a fault's offset is all a message has to go
+// on, and an offset with no bytes beside it is not something a person
+// can act on.
+//
+// ```novo
+// use std.bytes
+// use bencread
+//
+// fn main() [io]
+//     println(bencread.context(bytes.from_str("i03e"), 1, 8))
+// ```
+pub fn context(src: Bytes, at: Int, width: Int) -> Str []
+    todo("bencode-nv.bencread.context")

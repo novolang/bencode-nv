@@ -1,0 +1,314 @@
+// benctorrent — the `.torrent` file, typed.
+//
+// Every body is a `todo()`.  The signatures are the design, and the
+// compiler checks them as claims; see the README for the stamp.
+//
+// WHAT A TORRENT IS.  A bencoded dictionary with an `announce` member —
+// the tracker's URL — and an `info` member, which is itself a
+// dictionary describing the data.  `info` has a `name`, a `piece
+// length`, and a `pieces` member that is every piece's SHA-1 digest
+// concatenated, twenty bytes each.  It then describes the data in one
+// of two ways and never both: a `length`, for a single file, or a
+// `files` list of dictionaries each with its own `length` and a `path`
+// as a list of components.
+//
+// THE INFO-HASH IS NOT COMPUTED HERE, AND `info_span` IS WHY.  A
+// torrent's identity is the SHA-1 of its `info` dictionary's ENCODED
+// BYTES.  Re-encoding the values and hashing the result is right only
+// when the file was written canonically, and files in the wild are not
+// always — an unsorted dictionary, a member appended after sorting, a
+// client with its own habits.  Any of those gives a different hash, and
+// a different hash is a different torrent: the client joins a swarm
+// nobody is in and reports nothing wrong.
+//
+// So `info_span` answers the byte range and the caller hashes it with
+// crypto-nv.  The by-product is that this package links no hash
+// function, and that BEP 52's version 2 torrents — which take SHA-256
+// over the same span — need a different call at the caller's end and no
+// change here.
+//
+// PATHS ARE REFUSED, NOT SANITISED.  A multi-file torrent's `path` is a
+// list of components a stranger wrote, and `..` in one is a request to
+// write outside the download directory.  A reader that quietly removed
+// it would hand back a path the caller then writes to, having been told
+// nothing.  `BencUnsafePath` names the component and the file it was
+// in.
+
+// One file of a multi-file torrent.
+pub struct BencFile
+    // The path, as a list of components, relative to the torrent's own
+    // directory.  Already checked: no component is `..`, empty, or
+    // absolute.
+    path: [Str]
+    // The file's length in bytes.
+    length: Int
+
+// A torrent's `info` dictionary, read.
+pub struct BencInfo
+    // The suggested name: a file name for a single-file torrent, a
+    // directory name for a multi-file one.  BEP 3 calls it advisory.
+    name: Str
+    // The piece length in bytes.  Every piece but the last is exactly
+    // this long.
+    piece_length: Int
+    // Every piece's SHA-1 digest, concatenated: twenty bytes each, and
+    // nothing else.  A buffer whose length is not a multiple of twenty
+    // is `BencBadPieceTable`.
+    pieces: Bytes
+    // Whether the `private` member is the integer 1, which BEP 27 says
+    // means the client may use no peer source but the trackers named
+    // here.  False when the member is absent.
+    is_private: Bool
+    // The files.  For a single-file torrent this is one entry whose
+    // path is just the name, so a caller walks one list either way and
+    // `is_single_file` is there for the caller that needs the
+    // distinction.
+    files: [BencFile]
+    // Whether the torrent described its data with `length` rather than
+    // `files`.
+    is_single_file: Bool
+
+// A torrent file, read.
+pub struct BencTorrent
+    // The tracker's URL, or `""` when there is none — which a
+    // trackerless torrent, announced over the distributed hash table,
+    // legitimately has.
+    announce: Str
+    // The tiered tracker list of BEP 12, as a list of tiers each a list
+    // of URLs.  Empty when the member is absent.
+    announce_list: [[Str]]
+    // The data's description.
+    info: BencInfo
+    // The `creation date`, in Unix seconds, or `None`.
+    //
+    // The number the file holds.  This package reads no clock and never
+    // compares it with one.
+    creation_date: ?Int
+    // The `comment` member, or `""`.
+    comment: Str
+    // The `created by` member, or `""`.
+    created_by: Str
+    // The `encoding` member, or `""`.  It exists because the names in
+    // `info` are not always UTF-8, and a caller that must render one
+    // reads this and decides.
+    encoding: Str
+
+// The byte range the `info` dictionary occupies in a torrent's bytes.
+//
+// THE FUNCTION THIS PACKAGE'S SPANNED READER EXISTS FOR.  One scan, no
+// tree, no allocation for the values: the caller slices the buffer with
+// this range and hands the bytes to crypto-nv's SHA-1, and the digest
+// is the torrent's info-hash.
+//
+// `BencBadTorrent` when there is no `info` member.
+//
+// ```novo
+// use std.bytes
+// use benctorrent
+//
+// fn main() [io]
+//     match benctorrent.info_span(bytes.from_str("de"))
+//         Ok(_)  => println("this cannot happen — there is no info member")
+//         Err(e) => println(e.message())
+// ```
+pub fn info_span(src: Bytes) -> Result<BencSpan, BencFault> []
+    todo("bencode-nv.benctorrent.info_span")
+
+// The bytes the info-hash is taken over.
+//
+// `info_span` applied to the buffer.  Named because it is what a caller
+// actually wants, and because a caller that sliced by hand could slice
+// wrongly — off by the dictionary's own `d` and `e`, which are part of
+// the hash.
+//
+// ```novo
+// use std.bytes
+// use benctorrent
+//
+// fn main() [io]
+//     match benctorrent.info_hash_input(bytes.from_str("de"))
+//         Ok(_)  => println("this cannot happen")
+//         Err(e) => println(e.message())
+// ```
+pub fn info_hash_input(src: Bytes) -> Result<Bytes, BencFault> []
+    todo("bencode-nv.benctorrent.info_hash_input")
+
+// A torrent from the bytes of a `.torrent` file.
+//
+// Every member BEP 3 requires is checked and every optional one is read
+// if present.  `BencBadTorrent` names the path of a member that is
+// missing or of the wrong type,
+// `BencAmbiguousTorrentShape` a torrent with both `length` and `files`
+// or with neither, and `BencUnsafePath` a path component that would
+// escape the download directory.
+//
+// ```novo
+// use std.bytes
+// use benctorrent
+//
+// fn main() [io]
+//     match benctorrent.read(bytes.from_str("de"))
+//         Ok(_)  => println("this cannot happen — that is an empty dictionary")
+//         Err(e) => println(e.message())
+// ```
+pub fn read(src: Bytes) -> Result<BencTorrent, BencFault> []
+    todo("bencode-nv.benctorrent.read")
+
+// A torrent from a value already read.
+//
+// For a caller that has the dictionary from somewhere else — a magnet
+// link's metadata exchanged with a peer, a test fixture — and does not
+// have the file's bytes.  The info-hash cannot be taken from this: it
+// needs the bytes, which is the whole point of `info_span`.
+pub fn from_value(v: BencValue) -> Result<BencTorrent, BencFault> []
+    todo("bencode-nv.benctorrent.from_value")
+
+// An `info` dictionary from a value.
+//
+// The half a peer receives over the metadata extension, where the
+// enclosing torrent dictionary never arrives at all.
+pub fn info_from_value(v: BencValue) -> Result<BencInfo, BencFault> []
+    todo("bencode-nv.benctorrent.info_from_value")
+
+// The total length of everything the torrent describes.
+//
+// The `length` of a single-file torrent, or the sum of the `files`
+// lengths.
+//
+// ```novo
+// use benctorrent
+//
+// fn main() [io]
+//     println("${benctorrent.total_length(benctorrent.empty_info())}")   // 0
+// ```
+pub fn total_length(info: BencInfo) -> Int []
+    todo("bencode-nv.benctorrent.total_length")
+
+// How many pieces the torrent has: the length of `pieces` divided by
+// twenty.
+//
+// `BencBadPieceTable` when `pieces` is not a whole number of digests,
+// which is the one corruption a torrent file can have that every other
+// check passes.
+//
+// ```novo
+// use benctorrent
+//
+// fn main() [io]
+//     match benctorrent.piece_count(benctorrent.empty_info())
+//         Ok(n)  => println("${n}")   // 0
+//         Err(e) => println(e.message())
+// ```
+pub fn piece_count(info: BencInfo) -> Result<Int, BencFault> []
+    todo("bencode-nv.benctorrent.piece_count")
+
+// The SHA-1 digest of one piece, by its index, or `None`.
+//
+// Twenty bytes out of `pieces`.  What a client compares against the
+// digest of a piece it has downloaded — and it computes that digest
+// itself, with crypto-nv, because nothing here hashes.
+//
+// ```novo
+// use benctorrent
+//
+// fn main() [io]
+//     match benctorrent.piece_hash(benctorrent.empty_info(), 0)
+//         Some(_) => println("a digest")
+//         None    => println("no such piece")
+// ```
+pub fn piece_hash(info: BencInfo, index: Int) -> ?Bytes []
+    todo("bencode-nv.benctorrent.piece_hash")
+
+// The length of one piece: the piece length for every piece but the
+// last, and the remainder for the last.
+//
+// The arithmetic every client writes and half of them get wrong at the
+// final piece.
+//
+// ```novo
+// use benctorrent
+//
+// fn main() [io]
+//     println("${benctorrent.piece_size(benctorrent.empty_info(), 0)}")   // 0
+// ```
+pub fn piece_size(info: BencInfo, index: Int) -> Int []
+    todo("bencode-nv.benctorrent.piece_size")
+
+// Which file or files a piece's bytes fall in, as indexes into
+// `files`.
+//
+// A piece of a multi-file torrent spans file boundaries — the data is
+// treated as one concatenation and cut into pieces afterwards — so a
+// client verifying a piece has to read from more than one file.  This
+// is the calculation, which is otherwise the most error-prone part of a
+// client.
+//
+// ```novo
+// use benctorrent
+//
+// fn main() [io]
+//     println("${list.len(benctorrent.files_in_piece(benctorrent.empty_info(), 0))}")
+// ```
+pub fn files_in_piece(info: BencInfo, index: Int) -> [Int] []
+    todo("bencode-nv.benctorrent.files_in_piece")
+
+// Every tracker URL, the tiers of `announce-list` flattened and
+// `announce` first if it is not already in them.
+//
+// What a client actually wants when it is deciding whom to ask, with
+// the tiers already ordered.
+//
+// ```novo
+// use benctorrent
+//
+// fn main() [io]
+//     println("${list.len(benctorrent.trackers(benctorrent.empty_torrent()))}")   // 0
+// ```
+pub fn trackers(t: BencTorrent) -> [Str] []
+    todo("bencode-nv.benctorrent.trackers")
+
+// Whether the torrent names no tracker at all.
+//
+// A trackerless torrent is announced over the distributed hash table
+// instead, and is a torrent a client must not reject.
+pub fn is_trackerless(t: BencTorrent) -> Bool []
+    todo("bencode-nv.benctorrent.is_trackerless")
+
+// A torrent as the value it was read from.
+//
+// For a caller that wants to change a member and write the file back.
+// The result is written with `bencwrite.write`, which sorts — so the
+// file's info-hash may change, and a caller that must keep it uses
+// `bencread.slice` on the original instead.
+pub fn to_value(t: BencTorrent) -> BencValue []
+    todo("bencode-nv.benctorrent.to_value")
+
+// An `info` with everything empty: no name, no pieces, no files, a
+// piece length of zero.
+//
+// What a builder starts from, and what a test asserts the default
+// answers of the accessors against.
+pub fn empty_info() -> BencInfo []
+    todo("bencode-nv.benctorrent.empty_info")
+
+// A torrent with no tracker and an empty `info`.
+pub fn empty_torrent() -> BencTorrent []
+    todo("bencode-nv.benctorrent.empty_torrent")
+
+// Whether a path component is one a reader may accept: not empty, not
+// `.`, not `..`, and with no `/` or `\` in it.
+//
+// The rule behind `BencUnsafePath`, exposed, because a caller building
+// a torrent has to apply the same one and because a caller that has
+// disabled the check for a reason should be able to see what it turned
+// off.
+//
+// ```novo
+// use benctorrent
+//
+// fn main() [io]
+//     println("${benctorrent.is_safe_component("readme.txt")}")   // true
+//     println("${benctorrent.is_safe_component("..")}")           // false
+// ```
+pub fn is_safe_component(component: Str) -> Bool []
+    todo("bencode-nv.benctorrent.is_safe_component")

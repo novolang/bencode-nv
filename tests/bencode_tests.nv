@@ -1,0 +1,416 @@
+// bencode_tests.nv — the API suite, written against the signatures.
+//
+// RED ON PURPOSE: every body under `src/` is a `todo()`, so every
+// assertion here reaches `not implemented: bencode-nv.<module>.<fn>`.
+// That is the expected state of an interface release: the compiler has
+// checked every signature, every type and every effect row, and nothing
+// else has been checked because there is nothing else yet.
+//
+// THE VECTORS ARE BEP 3'S OWN AND BENDY'S.  BEP 3 gives the grammar and
+// the four worked examples every implementation quotes — `i3e`,
+// `i-3e`, `4:spam`, `l4:spam4:eggse`, `d3:cow3:moo4:spam4:eggse`.  The
+// Rust crate `bendy` and the Python `bencodepy` each ship a refusal
+// suite beside them: leading zeros, negative zero, a length with a
+// leading zero, a truncated string, a non-string key, a duplicate key.
+// The cases below are those, and the round-trip corpus that becomes a
+// generated run beside them is a directory of real `.torrent` files,
+// where the assertion is that the info-hash computed over
+// `info_span` matches the one the file's name carries.
+
+use std.test
+use std.list
+use std.str
+use std.bytes
+use bencerror
+use bencvalue
+use bencread
+use bencwrite
+use benctorrent
+
+fn b(s: Str) -> Bytes
+    bytes.from_str(s)
+
+// ── The four types ──────────────────────────────────────────────────
+
+@test
+fn test_the_four_worked_examples_of_bep_3()
+    match bencread.read(b("i3e"))
+        Err(e) => test.fail(e.message())
+        Ok(v)  =>
+            test.assert_eq(bencvalue.type_name(v), "integer")
+            match bencvalue.as_int(v)
+                Ok(n)   => test.assert_eq(n, 3)
+                Err(e2) => test.fail(e2.message())
+    match bencread.read(b("i-3e"))
+        Err(e) => test.fail(e.message())
+        Ok(v)  =>
+            match bencvalue.as_int(v)
+                Ok(n)   => test.assert_eq(n, 0 - 3)
+                Err(e2) => test.fail(e2.message())
+    match bencread.read(b("4:spam"))
+        Err(e) => test.fail(e.message())
+        Ok(v)  =>
+            test.assert_eq(bencvalue.type_name(v), "string")
+            match bencvalue.as_str(v)
+                Ok(s)   => test.assert_eq(s, "spam")
+                Err(e2) => test.fail(e2.message())
+    match bencread.read(b("l4:spam4:eggse"))
+        Err(e) => test.fail(e.message())
+        Ok(v)  =>
+            test.assert_eq(bencvalue.type_name(v), "list")
+            test.assert_eq(bencvalue.len(v), 2)
+            match bencvalue.as_list(v)
+                Ok(xs)  => test.assert_eq(list.len(xs), 2)
+                Err(e2) => test.fail(e2.message())
+    match bencread.read(b("d3:cow3:moo4:spam4:eggse"))
+        Err(e) => test.fail(e.message())
+        Ok(v)  =>
+            test.assert_eq(bencvalue.type_name(v), "dictionary")
+            test.assert_eq(list.len(bencvalue.keys(v)), 2)
+            test.assert(bencvalue.has(v, "cow"))
+            match bencvalue.get(v, "cow")
+                Err(e2) => test.fail(e2.message())
+                Ok(x)   =>
+                    match bencvalue.as_str(x)
+                        Ok(s)   => test.assert_eq(s, "moo")
+                        Err(e3) => test.fail(e3.message())
+            match bencvalue.as_dict(v)
+                Err(e2) => test.fail(e2.message())
+                Ok(es)  => test.assert_eq(bencvalue.key_str(list.get(es, 0)), "cow")
+
+@test
+fn test_a_byte_string_is_bytes_and_not_text()
+    // A torrent's `pieces` is a concatenation of SHA-1 digests and is
+    // not text in any encoding; a package handing back `Str` everywhere
+    // would truncate it at the first zero byte.
+    match bencread.read(b("2:\u{0}a"))
+        Err(e) => test.fail(e.message())
+        Ok(v)  =>
+            match bencvalue.as_bytes(v)
+                Ok(x)   => test.assert_eq(bytes.len(x), 2)
+                Err(e2) => test.fail(e2.message())
+    match bencvalue.as_int(bencvalue.text("x"))
+        Ok(_)  => test.fail("a string is not an integer")
+        Err(e) =>
+            test.assert_eq(bencerror.code_of(e), "wrong-type")
+            test.assert(bencerror.is_file_fault(e) == false)
+
+@test
+fn test_a_dictionary_can_be_built_and_walked_by_hand()
+    let inner = bencvalue.append(bencvalue.dict(), "name", bencvalue.text("ubuntu.iso"))
+    let d = bencvalue.dict_of([bencvalue.entry("info", inner)])
+    test.assert_eq(bencvalue.len(d), 1)
+    match bencvalue.path(d, ["info", "name"])
+        None    => test.fail("the path is there")
+        Some(v) =>
+            match bencvalue.as_str(v)
+                Ok(s)   => test.assert_eq(s, "ubuntu.iso")
+                Err(e2) => test.fail(e2.message())
+    match bencvalue.lookup(d, "comment")
+        Some(_) => test.fail("there is no comment")
+        None    => test.assert(true)
+    match bencvalue.get(d, "comment")
+        Ok(_)  => test.fail("there is no comment")
+        Err(e) => test.assert_eq(bencerror.code_of(e), "no-such-key")
+
+// ── The refusals that are in the grammar ────────────────────────────
+
+@test
+fn test_an_integer_has_exactly_one_spelling()
+    match bencread.read(b("i03e"))
+        Ok(_)  => test.fail("a leading zero is forbidden")
+        Err(e) =>
+            test.assert_eq(bencerror.code_of(e), "integer-leading-zero")
+            test.assert(bencerror.is_file_fault(e))
+    match bencread.read(b("i-0e"))
+        Ok(_)  => test.fail("there is no negative zero")
+        Err(e) => test.assert_eq(bencerror.code_of(e), "negative-zero")
+    match bencread.read(b("ie"))
+        Ok(_)  => test.fail("an integer needs digits")
+        Err(e) => test.assert_eq(bencerror.code_of(e), "empty-integer")
+    // `i0e` is the one zero there is.
+    match bencread.read(b("i0e"))
+        Err(e) => test.fail(e.message())
+        Ok(v)  =>
+            match bencvalue.as_int(v)
+                Ok(n)   => test.assert_eq(n, 0)
+                Err(e2) => test.fail(e2.message())
+    match bencread.read(b("i99999999999999999999e"))
+        Ok(_)  => test.fail("that does not fit a signed 64-bit value")
+        Err(e) => test.assert_eq(bencerror.code_of(e), "integer-overflow")
+
+@test
+fn test_a_byte_strings_length_is_checked_and_minimal()
+    match bencread.read(b("04:spam"))
+        Ok(_)  => test.fail("a length has no leading zero")
+        Err(e) => test.assert_eq(bencerror.code_of(e), "length-leading-zero")
+    match bencread.read(b("4spam"))
+        Ok(_)  => test.fail("a length is followed by a colon")
+        Err(e) => test.assert_eq(bencerror.code_of(e), "missing-colon")
+    match bencread.read(b("9:spam"))
+        Ok(_)  => test.fail("that length runs past the buffer")
+        Err(e) =>
+            test.assert_eq(bencerror.code_of(e), "length-overrun")
+            test.assert(bencerror.offset_of(e) >= 0)
+
+@test
+fn test_a_dictionary_key_is_a_byte_string_and_appears_once()
+    match bencread.read(b("di1e3:onee"))
+        Ok(_)  => test.fail("a key is a byte string")
+        Err(e) => test.assert_eq(bencerror.code_of(e), "non-string-key")
+    // A duplicate key has no meaning, and for a torrent the consequence
+    // is that two readers agree on the hash and disagree on what it
+    // identifies.
+    match bencread.read(b("d1:ai1e1:ai2ee"))
+        Ok(_)  => test.fail("a key appears once")
+        Err(e) => test.assert_eq(bencerror.code_of(e), "duplicate-key")
+
+@test
+fn test_an_unsorted_dictionary_is_read_and_reported_but_not_refused()
+    // Files in the wild are not always sorted, and a reader that
+    // refused one would refuse torrents every client accepts.
+    match bencread.read(b("d4:spam4:eggs3:cow3:mooe"))
+        Err(e) => test.fail(e.message())
+        Ok(v)  =>
+            test.assert_eq(bencvalue.len(v), 2)
+            test.assert(bencvalue.keys_sorted(v) == false)
+            // And the order is kept, because sorting it would change
+            // the bytes a re-encoding produces.
+            test.assert_eq(list.get(bencvalue.keys(v), 0), "spam")
+    match bencread.read(b("d3:cow3:moo4:spam4:eggse"))
+        Err(e) => test.fail(e.message())
+        Ok(v)  => test.assert(bencvalue.keys_sorted(v))
+
+@test
+fn test_the_reader_refuses_the_rest_of_the_buffer_and_has_limits()
+    match bencread.read(b("i7ei8e"))
+        Ok(_)  => test.fail("one buffer means one value")
+        Err(e) => test.assert_eq(bencerror.code_of(e), "trailing-bytes")
+    match bencread.read_prefix(b("i7ei8e"))
+        Err(e) => test.fail(e.message())
+        Ok(p)  => test.assert_eq(p.consumed, 3)
+    match bencread.read(b("x"))
+        Ok(_)  => test.fail("that byte cannot begin a value")
+        Err(e) => test.assert_eq(bencerror.code_of(e), "unexpected-byte")
+    match bencread.read(b("l"))
+        Ok(_)  => test.fail("that list never ends")
+        Err(e) => test.assert_eq(bencerror.code_of(e), "truncated")
+    let l = bencread.default_limits()
+    test.assert_eq(l.max_depth, 64)
+    test.assert_eq(l.max_string_bytes, 67108864)
+    test.assert_eq(l.max_values, 1000000)
+    match bencread.read_with(b("i7e"), l)
+        Err(e) => test.fail(e.message())
+        Ok(v)  => test.assert_eq(bencvalue.type_name(v), "integer")
+    match bencread.validate(b("i7e"))
+        Err(e) => test.fail(e.message())
+        Ok(ok) => test.assert(ok)
+    test.assert(str.len(bencread.context(b("i03e"), 1, 8)) > 0)
+
+// ── The spanned reader ──────────────────────────────────────────────
+
+@test
+fn test_every_node_remembers_the_bytes_it_occupied()
+    match bencread.read_tree(b("d3:cow3:mooe"))
+        Err(e) => test.fail(e.message())
+        Ok(t)  =>
+            test.assert_eq(bencread.root(t), 0)
+            test.assert(bencread.node_count(t) >= 2)
+            match bencread.node(t, bencread.root(t))
+                None    => test.fail("the root is there")
+                Some(n) =>
+                    test.assert_eq(n.kind, "dictionary")
+                    test.assert_eq(n.span.from, 0)
+                    test.assert_eq(n.span.to, 12)
+                    test.assert_eq(list.len(n.keys), 1)
+                    test.assert_eq(list.len(n.children), 1)
+            // The slice is the original bytes and cannot differ from
+            // them, which is the whole point.
+            test.assert_eq(bytes.to_str(bencread.slice(t, bencread.root(t))),
+                           "d3:cow3:mooe")
+            match bencread.child(t, bencread.root(t), "cow")
+                None    => test.fail("`cow` is there")
+                Some(c) =>
+                    test.assert_eq(bytes.to_str(bencread.slice(t, c)), "3:moo")
+                    test.assert_eq(bencvalue.type_name(bencread.value_of(t, c)), "string")
+            match bencread.node_at(t, ["cow"])
+                None    => test.fail("`cow` is there")
+                Some(c) => test.assert(c > 0)
+            match bencread.node(t, 999)
+                Some(_) => test.fail("there is no such node")
+                None    => test.assert(true)
+    match bencread.read_tree_with(b("i7e"), bencread.default_limits())
+        Err(e) => test.fail(e.message())
+        Ok(t)  => test.assert_eq(bencread.node_count(t), 1)
+
+@test
+fn test_one_span_can_be_found_with_no_tree_at_all()
+    // What a program that only wants an info-hash out of a large
+    // torrent should pay: one scan, no allocation for the values.
+    match bencread.span_at(b("d4:infod3:cow3:mooee"), ["info"])
+        Err(e)      => test.fail(e.message())
+        Ok(None)    => test.fail("`info` is there")
+        Ok(Some(s)) =>
+            test.assert_eq(s.from, 8)
+            test.assert_eq(s.to, 20)
+    match bencread.span_at(b("de"), ["info"])
+        Err(e)      => test.fail(e.message())
+        Ok(None)    => test.assert(true)
+        Ok(Some(_)) => test.fail("there is no `info`")
+
+// ── The writer, and the one thing that is not already canonical ─────
+
+@test
+fn test_everything_but_a_dictionarys_order_has_one_spelling()
+    test.assert_eq(bytes.to_str(bencwrite.write(BencInt(7))), "i7e")
+    test.assert_eq(bytes.to_str(bencwrite.write(bencvalue.text("spam"))), "4:spam")
+    test.assert_eq(bytes.to_str(bencwrite.write(BencList([BencInt(1)]))), "li1ee")
+    test.assert_eq(bencwrite.encoded_len(BencInt(7)), 3)
+    test.assert_eq(bencwrite.encoded_len(bencvalue.text("spam")), 6)
+
+@test
+fn test_write_sorts_and_write_as_is_does_not()
+    // Producing a new torrent means sorting, because that is the rule.
+    // Reproducing somebody else's file means not sorting, because its
+    // own order is what its info-hash was taken over.
+    let d = bencvalue.dict_of([bencvalue.entry("spam", bencvalue.text("eggs")),
+                               bencvalue.entry("cow", bencvalue.text("moo"))])
+    test.assert_eq(bytes.to_str(bencwrite.write(d)), "d3:cow3:moo4:spam4:eggse")
+    test.assert_eq(bytes.to_str(bencwrite.write_as_is(d)), "d4:spam4:eggs3:cow3:mooe")
+    test.assert(bencvalue.keys_sorted(bencwrite.canonical(d)))
+    test.assert(bencvalue.keys_sorted(d) == false)
+
+@test
+fn test_keys_sort_as_raw_bytes_and_not_by_a_locale()
+    // `"Z"` sorts before `"a"` because 0x5A is below 0x61, and a writer
+    // that used a locale's collation would produce a different file and
+    // a different info-hash.
+    test.assert(bencwrite.key_before("Z", "a"))
+    test.assert(bencwrite.key_before("info", "name"))
+    test.assert(bencwrite.key_before("name", "info") == false)
+    // Shorter first on a common prefix.
+    test.assert(bencwrite.key_before("a", "ab"))
+
+@test
+fn test_a_tool_can_ask_whether_a_file_would_change_if_it_were_rewritten()
+    test.assert(bencwrite.is_canonical(b("i7e")))
+    test.assert(bencwrite.is_canonical(b("d3:cow3:moo4:spam4:eggse")))
+    test.assert(bencwrite.is_canonical(b("d4:spam4:eggs3:cow3:mooe")) == false)
+    // A file that is not bencode is not non-canonical bencode.
+    test.assert(bencwrite.is_canonical(b("x")) == false)
+    match bencwrite.first_difference(b("i7e"))
+        Some(_) => test.fail("that is already canonical")
+        None    => test.assert(true)
+    match bencwrite.first_difference(b("d4:spam4:eggs3:cow3:mooe"))
+        None    => test.fail("that one is not")
+        Some(n) => test.assert(n >= 0)
+
+// ── The torrent on top ──────────────────────────────────────────────
+
+@test
+fn test_the_info_hash_is_taken_over_the_bytes_the_file_has()
+    // Re-encoding and hashing is right only for a canonically written
+    // file, and a different hash is a different torrent: the client
+    // joins a swarm nobody is in and reports nothing wrong.
+    let src = b("d8:announce3:foo4:infod3:cow3:mooee")
+    match benctorrent.info_span(src)
+        Err(e) => test.fail(e.message())
+        Ok(s)  =>
+            test.assert_eq(s.from, 22)
+            test.assert_eq(s.to, 34)
+    match benctorrent.info_hash_input(src)
+        Err(e) => test.fail(e.message())
+        Ok(x)  => test.assert_eq(bytes.to_str(x), "d3:cow3:mooe")
+    match benctorrent.info_span(b("de"))
+        Ok(_)  => test.fail("there is no `info` member")
+        Err(e) => test.assert_eq(bencerror.code_of(e), "bad-torrent")
+    match benctorrent.info_hash_input(b("de"))
+        Ok(_)  => test.fail("there is no `info` member")
+        Err(e) => test.assert(bencerror.is_file_fault(e))
+
+@test
+fn test_a_torrent_is_read_with_every_required_member_checked()
+    match benctorrent.read(b("de"))
+        Ok(_)  => test.fail("an empty dictionary is not a torrent")
+        Err(e) => test.assert_eq(bencerror.code_of(e), "bad-torrent")
+    let t = benctorrent.empty_torrent()
+    test.assert_eq(t.announce, "")
+    test.assert(benctorrent.is_trackerless(t))
+    test.assert_eq(list.len(benctorrent.trackers(t)), 0)
+    test.assert_eq(list.len(t.announce_list), 0)
+    match t.creation_date
+        Some(_) => test.fail("an empty torrent has no creation date")
+        None    => test.assert(true)
+    test.assert_eq(t.comment, "")
+    test.assert_eq(t.created_by, "")
+    test.assert_eq(t.encoding, "")
+    test.assert_eq(bencvalue.type_name(benctorrent.to_value(t)), "dictionary")
+
+@test
+fn test_the_info_dictionary_and_its_arithmetic()
+    let i = benctorrent.empty_info()
+    test.assert_eq(i.name, "")
+    test.assert_eq(i.piece_length, 0)
+    test.assert_eq(bytes.len(i.pieces), 0)
+    test.assert(i.is_private == false)
+    test.assert(i.is_single_file == false)
+    test.assert_eq(list.len(i.files), 0)
+    test.assert_eq(benctorrent.total_length(i), 0)
+    match benctorrent.piece_count(i)
+        Err(e) => test.fail(e.message())
+        Ok(n)  => test.assert_eq(n, 0)
+    match benctorrent.piece_hash(i, 0)
+        Some(_) => test.fail("there are no pieces")
+        None    => test.assert(true)
+    test.assert_eq(benctorrent.piece_size(i, 0), 0)
+    test.assert_eq(list.len(benctorrent.files_in_piece(i, 0)), 0)
+
+@test
+fn test_a_piece_table_is_a_whole_number_of_twenty_byte_digests()
+    // The one corruption a torrent file can have that every other check
+    // passes.
+    let bad = BencInfo { name: "x", piece_length: 16384,
+                         pieces: bytes.zeros(25), is_private: false,
+                         files: [], is_single_file: true }
+    match benctorrent.piece_count(bad)
+        Ok(_)  => test.fail("25 is not a multiple of 20")
+        Err(e) => test.assert_eq(bencerror.code_of(e), "bad-piece-table")
+
+@test
+fn test_a_torrent_reads_from_a_value_for_the_metadata_extension()
+    // Where the enclosing torrent dictionary never arrives at all.
+    match benctorrent.info_from_value(bencvalue.dict())
+        Ok(_)  => test.fail("an empty dictionary is not an info")
+        Err(e) => test.assert_eq(bencerror.code_of(e), "bad-torrent")
+    match benctorrent.from_value(bencvalue.dict())
+        Ok(_)  => test.fail("an empty dictionary is not a torrent")
+        Err(e) => test.assert(bencerror.is_file_fault(e))
+
+@test
+fn test_a_path_component_that_escapes_is_refused_and_not_cleaned()
+    // A caller handed a cleaned path would write files where the
+    // torrent said, having been told nothing.
+    test.assert(benctorrent.is_safe_component("readme.txt"))
+    test.assert(benctorrent.is_safe_component("..") == false)
+    test.assert(benctorrent.is_safe_component(".") == false)
+    test.assert(benctorrent.is_safe_component("") == false)
+    test.assert(benctorrent.is_safe_component("a/b") == false)
+    let src = b("d4:infod5:filesld6:lengthi1e4:pathl2:..eee12:piece lengthi1e"
+              + "6:pieces0:4:name1:xee")
+    match benctorrent.read(src)
+        Ok(_)  => test.fail("`..` would escape the download directory")
+        Err(e) => test.assert_eq(bencerror.code_of(e), "unsafe-path")
+
+@test
+fn test_a_torrent_is_single_file_or_multi_file_and_never_both()
+    let src = b("d4:infod6:lengthi1e5:filesle12:piece lengthi1e"
+              + "6:pieces0:4:name1:xee")
+    match benctorrent.read(src)
+        Ok(_)  => test.fail("a torrent has `length` or `files`, not both")
+        Err(e) => test.assert_eq(bencerror.code_of(e), "ambiguous-torrent-shape")
+
+@test
+fn test_a_file_entry_carries_its_path_and_its_length()
+    let f = BencFile { path: ["dir", "readme.txt"], length: 12 }
+    test.assert_eq(list.len(f.path), 2)
+    test.assert_eq(f.length, 12)
