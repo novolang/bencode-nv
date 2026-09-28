@@ -1,0 +1,255 @@
+// bencedge_tests.nv — every refusal of both readers, the accessors on
+// values of the wrong type, and a torrent with every member.
+
+use std.test
+use std.bytes
+use bencerror
+use bencvalue
+use bencread
+use bencwrite
+use benctorrent
+
+// A buffer from text.
+fn b(s: Str) -> Bytes
+    bytes.from_str(s)
+
+// Each fault, its code, its offset, whether it is about the file, and
+// the start of its message.
+fn faults() -> [(BencFault, Str, Int, Bool, Str)]
+    [(BencTruncated(3, 1), "truncated", 3, true, "at 3: the input ends"),
+     (BencUnexpectedByte(1, 120), "unexpected-byte", 1, true, "at 1: byte 120"),
+     (BencIntegerLeadingZero(0), "integer-leading-zero", 0, true, "at 0: an integer has no leading"),
+     (BencNegativeZero(4), "negative-zero", 4, true, "at 4: there is no negative zero"),
+     (BencEmptyInteger(2), "empty-integer", 2, true, "at 2: an integer has no digits"),
+     (BencIntegerOverflow(0, "99"), "integer-overflow", 0, true, "at 0: 99 does not fit"),
+     (BencLengthLeadingZero(5), "length-leading-zero", 5, true, "at 5: a string length has no"),
+     (BencMissingColon(6), "missing-colon", 6, true, "at 6: a string length is followed"),
+     (BencLengthOverrun(1, 9, 4), "length-overrun", 1, true, "at 1: a string of 9 bytes, and 4"),
+     (BencNonStringKey(1, "list"),
+        "non-string-key",
+        1,
+        true,
+        "at 1: a dictionary key is a string, not a list"),
+     (BencDuplicateKey(7, "a"), "duplicate-key", 7, true, "at 7: the key `a` appears twice"),
+     (BencDepthExceeded(2, 1), "depth-exceeded", 2, true, "at 2: nested deeper than 1"),
+     (BencTooLarge(0, "string", 8), "too-large", 0, true, "at 0: more than the string limit of 8"),
+     (BencTrailingBytes(3, 2), "trailing-bytes", 3, true, "at 3: 2 bytes follow"),
+     (BencWrongType("integer", "list"), "wrong-type", 0, false, "a list where a integer"),
+     (BencNoSuchKey("x"), "no-such-key", 0, false, "no key `x`"),
+     (BencBadTorrent("info.name", "is missing"),
+        "bad-torrent",
+        0,
+        true,
+        "the torrent's `info.name` is missing"),
+     (BencBadPieceTable(25), "bad-piece-table", 0, true, "`pieces` holds 25 bytes"),
+     (BencAmbiguousTorrentShape("has both"),
+        "ambiguous-torrent-shape",
+        0,
+        true,
+        "the torrent's `info` has both"),
+     (BencUnsafePath(2, ".."), "unsafe-path", 0, true, "file 2: the path component `..`")]
+
+@test
+fn test_every_fault_has_a_code_an_offset_and_a_message() [io]
+    for (f, code, at, in_file, message) in faults()
+        test.case(code)
+        test.assert_eq_str(bencerror.code_of(f), code)
+        test.assert_eq(bencerror.offset_of(f), at)
+        test.assert(bencerror.is_file_fault(f) == in_file)
+        test.assert(str.starts_with(f.message(), message))
+
+// Input both readers refuse, and the code of the fault.
+fn refusals() -> [(Str, Str)]
+    [("", "truncated"), ("x", "unexpected-byte"), ("i1xe", "unexpected-byte"), ("i12", "truncated"),
+     ("i-e", "empty-integer"), ("i9223372036854775808e", "integer-overflow"),
+     ("i-9223372036854775809e", "integer-overflow"), ("i99999999999999999999e", "integer-overflow"),
+     ("4", "truncated"), ("4x", "missing-colon"), ("99999999999999999999:a", "too-large"),
+     ("l", "truncated"), ("li1e", "truncated"), ("d1:a", "truncated"), ("d1:ai1e", "truncated"),
+     ("dli1eei1ee", "non-string-key"), ("ddeee", "non-string-key"), ("di1ei1ee", "non-string-key"),
+     ("dxe", "unexpected-byte"), ("d1:ai1e1:ai2ee", "duplicate-key"), ("lxe", "unexpected-byte"),
+     ("i1ei2e", "trailing-bytes")]
+
+@test
+fn test_both_readers_refuse_the_same_input_the_same_way() [io]
+    for (text, code) in refusals()
+        test.case(text)
+        match bencread.read(b(text))
+            Ok(_)  => test.fail("the input is refused")
+            Err(e) => test.assert_eq_str(bencerror.code_of(e), code)
+        match bencread.validate(b(text))
+            Ok(_)  => test.fail("the input is refused")
+            Err(e) => test.assert_eq_str(bencerror.code_of(e), code)
+        match bencread.span_at(b(text), ["a"])
+            Ok(_)  => test.fail("the input is refused")
+            Err(e) => test.assert_eq_str(bencerror.code_of(e), code)
+
+@test
+fn test_the_limits_hold_in_both_readers() [io]
+    let tight = BencLimits { max_depth: 1, max_string_bytes: 2, max_values: 3 }
+    for (text, code) in [("lli1eee", "depth-exceeded"), ("3:abc", "too-large"), ("li1ei2ei3ee", "too-large")]
+        test.case(text)
+        match bencread.read_with(b(text), tight)
+            Ok(_)  => test.fail("the input is over a limit")
+            Err(e) => test.assert_eq_str(bencerror.code_of(e), code)
+    test.case("the scanner has its own depth limit, the default")
+    var deep = ""
+    for _ in 0..65
+        deep = deep + "l"
+    match bencread.validate(b(deep))
+        Ok(_)  => test.fail("65 levels are over 64")
+        Err(e) => test.assert_eq_str(bencerror.code_of(e), "depth-exceeded")
+    test.case("the most negative integer has a spelling")
+    match bencread.read(b("i-9223372036854775808e"))
+        Ok(v)  => test.assert(v == BencInt(-9223372036854775807 - 1))
+        Err(e) => test.fail(e.message())
+
+@test
+fn test_the_tree_at_its_edges() [io]
+    match bencread.read_tree(b("d1:ali1e1:xee"))
+        Err(e) => test.fail(e.message())
+        Ok(t)  =>
+            test.assert_none(bencread.node(t, -1))
+            test.assert_none(bencread.child(t, 9, "a"))
+            test.assert_none(bencread.child(t, 0, "zz"))
+            test.assert_none(bencread.node_at(t, ["a", "b"]))
+            test.assert(bytes.len(bencread.slice(t, 9)) == 0)
+            test.assert(bencvalue.type_name(bencread.value_of(t, 9)) == "integer")
+            match bencread.node_at(t, ["a"])
+                None    => test.fail("`a` is there")
+                Some(n) =>
+                    test.assert_eq_str(bencvalue.type_name(bencread.value_of(t, n)), "list")
+                    test.assert_eq_str(bytes.to_str(bencread.slice(t, n)), "li1e1:xe")
+    test.case("a path through a value that is not a dictionary, and the empty path")
+    match bencread.span_at(b("d4:info1:xe"), ["info", "name"])
+        Ok(found) => test.assert_none(found)
+        Err(e)    => test.fail(e.message())
+    match bencread.span_at(b("d1:bi1ee"), ["a"])
+        Ok(found) => test.assert_none(found)
+        Err(e)    => test.fail(e.message())
+    match bencread.span_at(b("li1ee"), [])
+        Ok(Some(s)) => test.assert(s.from == 0 and s.to == 5)
+        _           => test.fail("the empty path is the whole value")
+    test.case("an unprintable byte is shown as a dot")
+    test.assert_eq_str(bencread.context(bytes.from_byte_list([0x61, 0, 0x62]), 1, 5), "a.b")
+
+@test
+fn test_every_accessor_refuses_the_wrong_type() [io]
+    let n = BencInt(1)
+    for r in [bencvalue.as_bytes(n)]
+        match r
+            Ok(_)  => test.fail("an integer is not a string")
+            Err(e) => test.assert_eq_str(bencerror.code_of(e), "wrong-type")
+    match bencvalue.as_str(n)
+        Ok(_)  => test.fail("an integer is not a string")
+        Err(e) => test.assert_eq_str(e.message(), "a integer where a string was asked for")
+    match bencvalue.as_list(n)
+        Ok(_)  => test.fail("an integer is not a list")
+        Err(e) => test.assert_eq_str(bencerror.code_of(e), "wrong-type")
+    match bencvalue.as_dict(n)
+        Ok(_)  => test.fail("an integer is not a dictionary")
+        Err(e) => test.assert_eq_str(bencerror.code_of(e), "wrong-type")
+    test.assert(bencvalue.len(bencvalue.append(n, "a", n)) == 0)
+    test.assert(bencvalue.len(bencvalue.text("abc")) == 0)
+    test.assert_none(bencvalue.lookup(n, "a"))
+    test.assert(bencvalue.keys_sorted(n))
+    test.assert(list.len(bencvalue.keys(n)) == 0)
+    test.assert_none(bencvalue.path(n, ["a"]))
+    test.case("a list is written with its dictionaries sorted")
+    let l = BencList([bencvalue.dict_of([bencvalue.entry("b", n), bencvalue.entry("a", n)])])
+    test.assert_eq_str(bytes.to_str(bencwrite.write(bencwrite.canonical(l))), "ld1:ai1e1:bi1eee")
+    test.assert_none(bencwrite.first_difference(b("x")))
+
+// Numbers joined by commas.
+fn joined(ns: [Int]) -> Str
+    var parts: [Str] = []
+    for n in ns
+        list.push(parts, str.from_int(n))
+    str.join(parts, ",")
+
+// A torrent with every member, built by hand.
+fn full() -> BencTorrent
+    let pieces = bytes.from_byte_list([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+                                       21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37,
+                                       38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54,
+                                       55, 56, 57, 58, 59, 60])
+    let info = BencInfo { name: "set", piece_length: 10, pieces: pieces, is_private: true,
+                          files: [BencFile { path: ["a.txt"], length: 4 },
+                                  BencFile { path: ["sub", "b.txt"], length: 0 },
+                                  BencFile { path: ["c.txt"], length: 21 }],
+                          is_single_file: false }
+    BencTorrent { announce: "http://a/announce", announce_list: [["http://b/"], ["http://a/announce", "udp://c/"]],
+                  info: info, creation_date: Some(1700000000), comment: "hi", created_by: "tests",
+                  encoding: "UTF-8" }
+
+@test
+fn test_a_torrent_with_every_member_writes_and_reads_back() [io]
+    let t = full()
+    let src = bencwrite.write(benctorrent.to_value(t))
+    match benctorrent.read(src)
+        Err(e) => test.fail(e.message())
+        Ok(r)  =>
+            test.assert_eq_str(r.announce, "http://a/announce")
+            test.assert(list.len(r.announce_list) == 2)
+            test.assert(r.creation_date == Some(1700000000))
+            test.assert_eq_str(r.comment + r.created_by + r.encoding, "hitestsUTF-8")
+            test.assert(r.info.is_private and not r.info.is_single_file)
+            test.assert_eq_str(str.join(r.info.files[1].path, "/"), "sub/b.txt")
+            test.assert(bencwrite.write(benctorrent.to_value(r)) == src)
+    test.case("the trackers, with announce not repeated")
+    test.assert_eq_str(str.join(benctorrent.trackers(t), " "), "http://b/ http://a/announce udp://c/")
+    test.assert(not benctorrent.is_trackerless(t))
+    let lone = BencTorrent { announce: "http://z/", announce_list: [], info: t.info, creation_date: None,
+                             comment: "", created_by: "", encoding: "" }
+    test.assert_eq_str(str.join(benctorrent.trackers(lone), " "), "http://z/")
+    test.case("the pieces: three of ten bytes over 25, the last of five")
+    test.assert(benctorrent.total_length(t.info) == 25)
+    test.assert(bytes.len(benctorrent.piece_hash(t.info, 2) ?? bytes.zeros(0)) == 20)
+    test.assert_none(benctorrent.piece_hash(t.info, 3))
+    test.assert(benctorrent.piece_size(t.info, 0) == 10 and benctorrent.piece_size(t.info, 2) == 5)
+    test.assert(benctorrent.piece_size(t.info, -1) == 0)
+    test.assert_eq_str(joined(benctorrent.files_in_piece(t.info, 0)), "0,2")
+    test.assert(list.len(benctorrent.files_in_piece(t.info, 2)) == 1)
+    test.case("a single-file torrent writes `length`")
+    let single = BencInfo { name: "one", piece_length: 4, pieces: bytes.zeros(20), is_private: false,
+                            files: [BencFile { path: ["one"], length: 3 }], is_single_file: true }
+    let whole = BencTorrent { announce: "", announce_list: [], info: single, creation_date: None, comment: "",
+                              created_by: "", encoding: "" }
+    let info = bencvalue.lookup(benctorrent.to_value(whole), "info") ?? BencInt(0)
+    match benctorrent.info_from_value(info)
+        Err(e) => test.fail(e.message())
+        Ok(i)  => test.assert(i.is_single_file and benctorrent.total_length(i) == 3)
+
+// A torrent file and the code of the fault reading it answers.
+fn bad_torrents() -> [(Str, Str)]
+    [("i1e", "bad-torrent"), ("d4:infoi1ee", "bad-torrent"),
+     ("d8:announcei1e4:infod4:name1:x12:piece lengthi1e6:pieces0:6:lengthi1eee", "bad-torrent"),
+     ("d13:creation date1:x4:infod4:name1:x12:piece lengthi1e6:pieces0:6:lengthi1eee", "bad-torrent"),
+     ("d13:announce-listi1e4:infod4:name1:x12:piece lengthi1e6:pieces0:6:lengthi1eee", "bad-torrent"),
+     ("d13:announce-listli1ee4:infod4:name1:x12:piece lengthi1e6:pieces0:6:lengthi1eee",
+        "bad-torrent"),
+     ("d13:announce-listlli1eee4:infod4:name1:x12:piece lengthi1e6:pieces0:6:lengthi1eee",
+        "bad-torrent"),
+     ("d4:infod4:name2:..12:piece lengthi1e6:pieces0:6:lengthi1eee", "unsafe-path"),
+     ("d4:infod4:name1:x12:piece lengthi1e6:piecesi1e6:lengthi1eee", "bad-torrent"),
+     ("d4:infod4:name1:x12:piece lengthi1e6:pieces3:abc6:lengthi1eee", "bad-piece-table"),
+     ("d4:infod4:name1:x12:piece lengthi1e6:pieces0:ee", "ambiguous-torrent-shape"),
+     ("d4:infod4:name1:x12:piece lengthi1e6:pieces0:5:filesi1eee", "bad-torrent"),
+     ("d4:infod4:name1:x12:piece lengthi1e6:pieces0:5:filesld4:pathli1ee6:lengthi1eeeee",
+        "bad-torrent"),
+     ("d4:infod4:name1:x12:piece lengthi1e6:pieces0:5:filesld4:pathle6:lengthi1eeeee", "bad-torrent"),
+     ("d4:infod4:name1:x12:piece lengthi1e6:pieces0:5:filesld4:pathl1:aeeeee", "bad-torrent"),
+     ("d4:infod4:name1:x6:pieces0:6:lengthi1eee", "bad-torrent")]
+
+@test
+fn test_every_torrent_refusal() [io]
+    for (text, code) in bad_torrents()
+        test.case(text)
+        match benctorrent.read(b(text))
+            Ok(_)  => test.fail("the torrent is refused")
+            Err(e) => test.assert_eq_str(bencerror.code_of(e), code)
+    match benctorrent.info_span(b("d4:infoi1ee"))
+        Ok(_)  => test.fail("`info` is not a dictionary")
+        Err(e) => test.assert_eq_str(e.message(), "the torrent's `info` is not a dictionary")
+    match benctorrent.info_from_value(BencInt(1))
+        Ok(_)  => test.fail("an integer is not an info dictionary")
+        Err(e) => test.assert_eq_str(bencerror.code_of(e), "bad-torrent")

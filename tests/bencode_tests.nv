@@ -1,21 +1,12 @@
 // bencode_tests.nv — the API suite, written against the signatures.
 //
-// RED ON PURPOSE: every body under `src/` is a `todo()`, so every
-// assertion here reaches `not implemented: bencode-nv.<module>.<fn>`.
-// That is the expected state of an interface release: the compiler has
-// checked every signature, every type and every effect row, and nothing
-// else has been checked because there is nothing else yet.
-//
-// THE VECTORS ARE BEP 3'S OWN AND BENDY'S.  BEP 3 gives the grammar and
-// the four worked examples every implementation quotes — `i3e`,
-// `i-3e`, `4:spam`, `l4:spam4:eggse`, `d3:cow3:moo4:spam4:eggse`.  The
-// Rust crate `bendy` and the Python `bencodepy` each ship a refusal
-// suite beside them: leading zeros, negative zero, a length with a
-// leading zero, a truncated string, a non-string key, a duplicate key.
-// The cases below are those, and the round-trip corpus that becomes a
-// generated run beside them is a directory of real `.torrent` files,
-// where the assertion is that the info-hash computed over
-// `info_span` matches the one the file's name carries.
+// The vectors are BEP 3's own and the refusals bendy and bencodepy
+// test.  BEP 3 gives the grammar and the worked examples every
+// implementation quotes: `i3e`, `i-3e`, `4:spam`, `l4:spam4:eggse` and
+// `d3:cow3:moo4:spam4:eggse`.  The Rust crate `bendy` and the Python
+// `bencodepy` each test the refusals beside them: leading zeros,
+// negative zero, a length with a leading zero, a truncated string, a
+// non-string key and a duplicate key.
 
 use std.test
 use std.list
@@ -251,8 +242,8 @@ fn test_one_span_can_be_found_with_no_tree_at_all()
         Err(e)      => test.fail(e.message())
         Ok(None)    => test.fail("`info` is there")
         Ok(Some(s)) =>
-            test.assert_eq(s.from, 8)
-            test.assert_eq(s.to, 20)
+            test.assert_eq(s.from, 7)
+            test.assert_eq(s.to, 19)
     match bencread.span_at(b("de"), ["info"])
         Err(e)      => test.fail(e.message())
         Ok(None)    => test.assert(true)

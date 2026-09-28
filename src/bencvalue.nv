@@ -1,29 +1,26 @@
 // bencvalue — the four types, and the dictionary that keeps its order.
 //
-// Every body is a `todo()`.  The signatures are the design, and the
-// compiler checks them as claims; see the README for the stamp.
-//
-// BENCODE IS FOUR TYPES AND NOTHING ELSE.  An integer, written
+// Bencode is four types and nothing else (BEP 3).  An integer, written
 // `i<digits>e`.  A byte string, written `<length>:<bytes>`.  A list,
-// written `l<values>e`.  A dictionary, written `d<key><value>…e` whose
-// keys are byte strings.  There is no boolean, no null, no float and no
-// nesting rule beyond those.  A torrent's `private` flag is the integer
-// 1, and its `creation date` is Unix seconds as an integer.
+// written `l<values>e`.  A dictionary, written `d<key><value>…e`, whose
+// keys are byte strings.  There is no boolean, no null and no float.
+// A torrent's `private` flag is the integer 1, and its `creation date`
+// is Unix seconds as an integer.
 //
-// A BYTE STRING IS BYTES AND NOT TEXT.  BEP 3 says nothing about the
+// A byte string is bytes and not text.  BEP 3 says nothing about the
 // encoding of a byte string, and a torrent's `pieces` member is a
 // concatenation of twenty-byte SHA-1 digests that is not text in any
 // encoding.  So `BencBytes` carries `Bytes`, and `as_str` is a separate
-// accessor a caller reaches for when it knows the member is a name.  A
-// package that handed back `Str` everywhere would hand back a `pieces`
-// truncated at the first zero byte.
+// accessor for a member the caller knows is a name.
 //
-// A DICTIONARY KEEPS THE ORDER IT WAS READ IN.  BEP 3 requires a WRITER
-// to sort keys as raw byte strings, and files in the wild do not always.
-// Sorting on read would change the bytes a re-encoding produces, which
-// changes a torrent's info-hash, which changes what the torrent
-// identifies.  So nothing here sorts; `bencwrite.canonical` is where
-// sorting happens, deliberately and with its consequence stated.
+// A dictionary keeps the order it was read in.  BEP 3 requires a
+// writer to sort keys as raw byte strings, and files in the wild do
+// not always.  Sorting on read would change the bytes a re-encoding
+// produces, and so a torrent's info-hash.  Nothing here sorts;
+// `bencwrite.canonical` is where sorting happens.
+
+use std.bytes
+use bencerror
 
 // A bencode value.
 //
@@ -34,9 +31,8 @@
 //     println(bencvalue.type_name(BencInt(7)))   // integer
 // ```
 pub enum BencValue
-    // `i<digits>e`.  Signed, and this package holds it in a 64-bit
-    // integer; a number too large for that is `BencIntegerOverflow` at
-    // the reader rather than a wrapped value.
+    // `i<digits>e`.  Signed and 64-bit; a number too large for that is
+    // `BencIntegerOverflow` at the reader rather than a wrapped value.
     BencInt(v: Int)
     // `<length>:<bytes>`.  Bytes, not text.
     BencBytes(v: Bytes)
@@ -59,14 +55,22 @@ pub struct BencEntry
 // The type's name, as BEP 3 writes it: `"integer"`, `"string"`,
 // `"list"`, `"dictionary"`.
 //
-// What `BencWrongType` reports.
+// It is what `BencWrongType` reports.
+//
+// ```novo
+// use bencvalue
+//
+// fn main() [io]
+//     println(bencvalue.type_name(BencList([])))   // list
+// ```
 pub fn type_name(v: BencValue) -> Str []
-    todo("bencode-nv.bencvalue.type_name")
+    match v
+        BencInt(_)   => "integer"
+        BencBytes(_) => "string"
+        BencList(_)  => "list"
+        BencDict(_)  => "dictionary"
 
 // A byte-string value from text.
-//
-// The constructor a caller building a dictionary by hand uses, since
-// every key it writes is a name.
 //
 // ```novo
 // use bencvalue
@@ -75,11 +79,18 @@ pub fn type_name(v: BencValue) -> Str []
 //     println(bencvalue.type_name(bencvalue.text("ubuntu.iso")))   // string
 // ```
 pub fn text(s: Str) -> BencValue []
-    todo("bencode-nv.bencvalue.text")
+    BencBytes(bytes.from_str(s))
 
 // One dictionary entry, with the key given as text.
+//
+// ```novo
+// use bencvalue
+//
+// fn main() [io]
+//     println(bencvalue.key_str(bencvalue.entry("name", BencInt(1))))   // name
+// ```
 pub fn entry(key: Str, value: BencValue) -> BencEntry []
-    todo("bencode-nv.bencvalue.entry")
+    BencEntry { key: bytes.from_str(key), value: value }
 
 // An empty dictionary.
 //
@@ -90,22 +101,54 @@ pub fn entry(key: Str, value: BencValue) -> BencEntry []
 //     println("${bencvalue.len(bencvalue.dict())}")   // 0
 // ```
 pub fn dict() -> BencValue []
-    todo("bencode-nv.bencvalue.dict")
+    BencDict([])
 
 // A dictionary from its entries, in the order given.
 //
 // Nothing is sorted.  `bencwrite.canonical` is where that happens.
+//
+// ```novo
+// use bencvalue
+//
+// fn main() [io]
+//     let d = bencvalue.dict_of([bencvalue.entry("b", BencInt(1)), bencvalue.entry("a", BencInt(2))])
+//     println("${bencvalue.keys_sorted(d)}")   // false
+// ```
 pub fn dict_of(entries: [BencEntry]) -> BencValue []
-    todo("bencode-nv.bencvalue.dict_of")
+    BencDict(entries)
 
-// `d` with one more entry at the end.
+// A dictionary with one more entry at the end.  A value that is not a
+// dictionary is answered unchanged.
+//
+// ```novo
+// use bencvalue
+//
+// fn main() [io]
+//     println("${bencvalue.len(bencvalue.append(bencvalue.dict(), "a", BencInt(1)))}")   // 1
+// ```
 pub fn append(d: BencValue, key: Str, value: BencValue) -> BencValue []
-    todo("bencode-nv.bencvalue.append")
+    match d
+        BencDict(entries) => BencDict(list.concat(entries, [entry(key, value)]))
+        _                 => d
 
 // How many entries a dictionary has, or how many elements a list has;
 // `0` for an integer or a byte string.
+//
+// ```novo
+// use bencvalue
+//
+// fn main() [io]
+//     println("${bencvalue.len(BencList([BencInt(1)]))}")   // 1
+// ```
 pub fn len(v: BencValue) -> Int []
-    todo("bencode-nv.bencvalue.len")
+    match v
+        BencList(items)   => list.len(items)
+        BencDict(entries) => list.len(entries)
+        _                 => 0
+
+// The fault for a value of the wrong type.
+fn wrong(want: Str, v: BencValue) -> BencFault
+    BencWrongType(want, type_name(v))
 
 // The integer a value holds, or `BencWrongType`.
 //
@@ -118,18 +161,31 @@ pub fn len(v: BencValue) -> Int []
 //         Err(e) => println(e.message())
 // ```
 pub fn as_int(v: BencValue) -> Result<Int, BencFault> []
-    todo("bencode-nv.bencvalue.as_int")
+    match v
+        BencInt(n) => Ok(n)
+        _          => Err(wrong("integer", v))
 
 // The bytes a value holds, or `BencWrongType`.
+//
+// ```novo
+// use std.bytes
+// use bencvalue
+//
+// fn main() [io]
+//     match bencvalue.as_bytes(bencvalue.text("ab"))
+//         Ok(b)  => println("${bytes.len(b)}")   // 2
+//         Err(e) => println(e.message())
+// ```
 pub fn as_bytes(v: BencValue) -> Result<Bytes, BencFault> []
-    todo("bencode-nv.bencvalue.as_bytes")
+    match v
+        BencBytes(b) => Ok(bytes.clone(b))
+        _            => Err(wrong("string", v))
 
 // The bytes a value holds, as text, or `BencWrongType`.
 //
 // Nothing validates UTF-8: BEP 3 says nothing about the encoding, and a
-// torrent's `encoding` member exists precisely because names are not
-// always UTF-8.  A caller that needs to know reads that member and
-// decides.
+// torrent's `encoding` member exists because names are not always
+// UTF-8.
 //
 // ```novo
 // use bencvalue
@@ -140,50 +196,99 @@ pub fn as_bytes(v: BencValue) -> Result<Bytes, BencFault> []
 //         Err(e) => println(e.message())
 // ```
 pub fn as_str(v: BencValue) -> Result<Str, BencFault> []
-    todo("bencode-nv.bencvalue.as_str")
+    match v
+        BencBytes(b) => Ok(bytes.to_str(b))
+        _            => Err(wrong("string", v))
 
 // The list a value holds, or `BencWrongType`.
+//
+// ```novo
+// use bencvalue
+//
+// fn main() [io]
+//     match bencvalue.as_list(BencList([]))
+//         Ok(xs) => println("${list.len(xs)}")   // 0
+//         Err(e) => println(e.message())
+// ```
 pub fn as_list(v: BencValue) -> Result<[BencValue], BencFault> []
-    todo("bencode-nv.bencvalue.as_list")
+    match v
+        BencList(items) => Ok(items[:])
+        _               => Err(wrong("list", v))
 
 // The dictionary entries a value holds, or `BencWrongType`.
+//
+// ```novo
+// use bencvalue
+//
+// fn main() [io]
+//     match bencvalue.as_dict(bencvalue.dict())
+//         Ok(es) => println("${list.len(es)}")   // 0
+//         Err(e) => println(e.message())
+// ```
 pub fn as_dict(v: BencValue) -> Result<[BencEntry], BencFault> []
-    todo("bencode-nv.bencvalue.as_dict")
+    match v
+        BencDict(entries) => Ok(entries[:])
+        _                 => Err(wrong("dictionary", v))
 
 // An entry's key as text.
 //
-// Every key in a torrent is ASCII in practice; this is the accessor
-// that says so without every caller converting.
-pub fn key_str(e: BencEntry) -> Str []
-    todo("bencode-nv.bencvalue.key_str")
-
-// The value under a key, or `BencNoSuchKey`.
+// ```novo
+// use bencvalue
 //
-// A reader never meets a dictionary with two of one key — the reader
-// refuses it — so there is no first-or-last question here.
+// fn main() [io]
+//     println(bencvalue.key_str(bencvalue.entry("info", bencvalue.dict())))   // info
+// ```
+pub fn key_str(e: BencEntry) -> Str []
+    bytes.to_str(e.key)
+
+// The value under a key, or `BencNoSuchKey`.  A value that is not a
+// dictionary has no keys.
+//
+// The reader refuses a dictionary with two of one key, so a read value
+// has no first-or-last question here.
 //
 // ```novo
 // use bencvalue
 //
 // fn main() [io]
 //     match bencvalue.get(bencvalue.dict(), "announce")
-//         Ok(_)  => println("this cannot happen — the dictionary is empty")
-//         Err(e) => println(e.message())
+//         Ok(_)  => println("found")
+//         Err(e) => println(e.message())   // no key `announce`
 // ```
 pub fn get(v: BencValue, key: Str) -> Result<BencValue, BencFault> []
-    todo("bencode-nv.bencvalue.get")
+    match lookup(v, key)
+        Some(x) => Ok(x)
+        None    => Err(BencNoSuchKey(key))
 
 // The same lookup as an option, for a caller with a default in hand.
 //
-// What every optional torrent member is read with: `comment`,
-// `created by`, `encoding` and `private` are all absent from real
-// files.
+// ```novo
+// use bencvalue
+//
+// fn main() [io]
+//     match bencvalue.lookup(bencvalue.dict(), "comment")
+//         Some(_) => println("found")
+//         None    => println("absent")
+// ```
 pub fn lookup(v: BencValue, key: Str) -> ?BencValue []
-    todo("bencode-nv.bencvalue.lookup")
+    let BencDict(entries) = v else
+        return None
+    let k = bytes.from_str(key)
+    for e in entries
+        if e.key == k
+            return Some(e.value)
+    None
 
 // Whether the dictionary has this key.
+//
+// ```novo
+// use bencvalue
+//
+// fn main() [io]
+//     println("${bencvalue.has(bencvalue.dict(), "info")}")   // false
+// ```
 pub fn has(v: BencValue, key: Str) -> Bool []
-    todo("bencode-nv.bencvalue.has")
+    lookup(v, key) != None
 
 // Every key of a dictionary, as text, in the order the file had them.
 //
@@ -194,18 +299,30 @@ pub fn has(v: BencValue, key: Str) -> Bool []
 //     println("${list.len(bencvalue.keys(bencvalue.dict()))}")   // 0
 // ```
 pub fn keys(v: BencValue) -> [Str] []
-    todo("bencode-nv.bencvalue.keys")
+    var out: [Str] = []
+    if let BencDict(entries) = v
+        for e in entries
+            list.push(out, key_str(e))
+    out
+
+// Whether `a` sorts before `b` as raw byte strings: unsigned, byte by
+// byte, and the shorter first on a common prefix.
+fn bytes_before(a: Bytes, b: Bytes) -> Bool
+    let n = math.min(bytes.len(a), bytes.len(b))
+    for i in 0..n
+        let x = bytes.byte_at(a, i) ?? 0
+        let y = bytes.byte_at(b, i) ?? 0
+        if x != y
+            return x < y
+    bytes.len(a) < bytes.len(b)
 
 // Whether a dictionary's keys are in the order BEP 3 requires a writer
-// to put them in: ascending as raw byte strings.
+// to put them in: ascending as raw byte strings.  True for a value that
+// is not a dictionary.
 //
-// A QUESTION AND NOT A RULE AT THE READER.  Files in the wild are not
-// always sorted, and a reader that refused one would refuse torrents
-// every client accepts.
-//
-// Compared as raw bytes, which is not the same as comparing as text in
-// any locale: `"Z"` sorts before `"a"` because `0x5A` is below `0x61`,
-// and a sort that used a locale would produce a different file.
+// It is a question and not a rule at the reader, because files in the
+// wild are not always sorted.  Raw bytes are not text in any locale:
+// `"Z"` sorts before `"a"` because `0x5A` is below `0x61`.
 //
 // ```novo
 // use bencvalue
@@ -214,7 +331,12 @@ pub fn keys(v: BencValue) -> [Str] []
 //     println("${bencvalue.keys_sorted(bencvalue.dict())}")   // true
 // ```
 pub fn keys_sorted(v: BencValue) -> Bool []
-    todo("bencode-nv.bencvalue.keys_sorted")
+    let BencDict(entries) = v else
+        return true
+    for i in 1..list.len(entries)
+        if not bytes_before(entries[i - 1].key, entries[i].key)
+            return false
+    true
 
 // The value at a path of dictionary keys, or `None`.
 //
@@ -230,4 +352,11 @@ pub fn keys_sorted(v: BencValue) -> Bool []
 //         None    => println("no such path")
 // ```
 pub fn path(v: BencValue, keys: [Str]) -> ?BencValue []
-    todo("bencode-nv.bencvalue.path")
+    var at = v
+    for k in keys
+        match lookup(at, k)
+            Some(x) =>
+                at = x
+            None    =>
+                return None
+    Some(at)

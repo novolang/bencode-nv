@@ -1,36 +1,32 @@
 // bencerror — every refusal, and the byte offset each of them carries.
 //
-// Every body is a `todo()`.  The signatures are the design, and the
-// compiler checks them as claims; see the README for the stamp.
+// Bencode has no whitespace, no comments and no lines, so an offset is
+// the only place a fault can be.  Every fault about the bytes carries
+// one, and `bencread.context` cuts the surrounding bytes out for a
+// message.
 //
-// BENCODE HAS NO WHITESPACE, NO COMMENTS AND NO LINES, so an offset is
-// the only place a fault can be.  Every variant here carries one, and
-// `bencread.context` cuts the surrounding bytes out for a message.
+// A dictionary whose keys are out of order is not a fault.  BEP 3
+// requires a writer to sort them, files in the wild do not always, and
+// a reader that refused one would refuse torrents every client
+// accepts.  The ordering is a question, `bencwrite.is_canonical`, and a
+// writer rule, and never a reason to fail a read.
 //
-// THE FAULTS THAT ARE NOT HERE are as much of the design as the ones
-// that are.  A dictionary whose keys are out of order is NOT a fault:
-// BEP 3 requires a writer to sort them and files in the wild do not
-// always, and a reader that refused one would refuse torrents that
-// every client accepts.  The ordering is a question — `bencwrite.
-// is_canonical` — and a writer rule, and never a reason to fail a read.
-//
-// A DUPLICATE KEY IS a fault, and the distinction is not arbitrary. An
-// unsorted dictionary still has one value per key, so a reader knows
-// what it holds.  A dictionary with the same key twice does not, and
-// for a torrent the consequence is worse than ambiguity: the
-// info-hash is taken over the bytes, so two readers that resolved the
-// duplicate differently would agree on the hash and disagree on what
-// it identifies.
+// A duplicate key is a fault.  An unsorted dictionary still has one
+// value per key, so a reader knows what it holds.  A dictionary with
+// the same key twice does not, and for a torrent two readers that
+// resolved the duplicate differently would agree on the info-hash and
+// disagree on what it identifies.
 
 // What went wrong.
 pub enum BencFault
-    // The buffer ended in the middle of a value.
+    // The buffer ended in the middle of a value, and at least `need`
+    // more bytes were expected.
     BencTruncated(at: Int, need: Int)
-    // A byte that cannot begin a value: bencode starts a value with
-    // `i`, `l`, `d` or a digit and with nothing else.
+    // A byte that cannot stand here.  A value starts with `i`, `l`, `d`
+    // or a digit, and an integer holds only digits and a leading `-`.
     BencUnexpectedByte(at: Int, saw: Int)
-    // An integer with a leading zero — `i03e` — which BEP 3 forbids so
-    // that every number has one spelling.
+    // An integer with a leading zero, such as `i03e`, which BEP 3
+    // forbids so that every number has one spelling.
     BencIntegerLeadingZero(at: Int)
     // `i-0e`, which BEP 3 names as invalid: there is no negative zero.
     BencNegativeZero(at: Int)
@@ -38,9 +34,8 @@ pub enum BencFault
     BencEmptyInteger(at: Int)
     // An integer whose digits do not fit a signed 64-bit value.
     //
-    // BEP 3 puts no bound on the number, and a torrent's `length` for a
-    // file larger than eight exabytes would be one.  No such file
-    // exists, and refusing is better than wrapping.
+    // BEP 3 puts no bound on the number.  A value that would wrap is
+    // refused rather than wrapped.
     BencIntegerOverflow(at: Int, digits: Str)
     // A byte string whose length has a leading zero.
     BencLengthLeadingZero(at: Int)
@@ -50,24 +45,26 @@ pub enum BencFault
     // buffer.
     BencLengthOverrun(at: Int, declared: Int, available: Int)
     // A dictionary key that is not a byte string.  BEP 3 permits
-    // nothing else there.
+    // nothing else there.  `saw` is the type that stood there.
     BencNonStringKey(at: Int, saw: Str)
-    // A dictionary with the same key twice.  See the note above.
+    // A dictionary with the same key twice.
     BencDuplicateKey(at: Int, key: Str)
-    // The value nested deeper than the reader's limit.
+    // A list or a dictionary nested deeper than the reader's limit.
     //
-    // A list head costs one byte and opens a level, so a reader without
-    // a limit is a stack overflow that arrives as a short message — and
-    // a torrent file is something a stranger sends you.
+    // A list head costs one byte and opens a level, so without a limit
+    // a short message could exhaust the stack.
     BencDepthExceeded(at: Int, depth: Int)
-    // A value was read and bytes were left over.
+    // A byte string longer than the reader's limit, or more values than
+    // it builds.  `what` names the limit: `"string"` or `"values"`.
+    BencTooLarge(at: Int, what: Str, limit: Int)
+    // A value was read and `len` bytes were left over.
     BencTrailingBytes(at: Int, len: Int)
     // An accessor was asked for one type and the value was another.
     BencWrongType(want: Str, saw: Str)
     // A key the caller asked for is not in the dictionary.
     BencNoSuchKey(key: Str)
     // A torrent is missing a member BEP 3 requires, or has one of the
-    // wrong type.
+    // wrong type.  `path` names the member, such as `info.name`.
     BencBadTorrent(path: Str, why: Str)
     // A torrent's `pieces` is not a whole number of twenty-byte
     // hashes.
@@ -75,22 +72,42 @@ pub enum BencFault
     // A torrent that is neither single-file nor multi-file: its `info`
     // has both `length` and `files`, or neither.
     BencAmbiguousTorrentShape(why: Str)
-    // A path component in a multi-file torrent that would escape the
-    // torrent's own directory: `..`, an absolute component, or an empty
-    // one.
+    // A path component in a torrent that would escape the torrent's own
+    // directory: `..`, `.`, an empty one, or one holding `/` or `\`.
+    // `index` is the file's position in `files`, or `-1` for the
+    // torrent's `name`.
     //
-    // A REFUSAL AND NOT A SANITISATION.  A caller that was handed a
-    // cleaned path would write files where the torrent said, and the
-    // whole point is that the torrent said somewhere it should not.
+    // It is a refusal and not a sanitisation.  A caller handed a
+    // cleaned path would write files where the torrent said, having
+    // been told nothing.
     BencUnsafePath(index: Int, component: Str)
 
 // The standard `Error` implementation, so a bad file can be reported by
 // anything that reports errors.
 impl Error for BencFault
-    // Answer the one-line report: what was wrong, and at what byte
-    // offset.
+    // The one-line report: what was wrong, and at what byte offset.
     fn message(self) -> Str
-        todo("bencode-nv.bencerror.BencFault.message")
+        match self
+            BencTruncated(at, need)          => "at ${at}: the input ends, and ${need} more bytes were expected"
+            BencUnexpectedByte(at, saw)      => "at ${at}: byte ${saw} cannot stand here"
+            BencIntegerLeadingZero(at)       => "at ${at}: an integer has no leading zero"
+            BencNegativeZero(at)             => "at ${at}: there is no negative zero"
+            BencEmptyInteger(at)             => "at ${at}: an integer has no digits"
+            BencIntegerOverflow(at, digits)  => "at ${at}: ${digits} does not fit a signed 64-bit integer"
+            BencLengthLeadingZero(at)        => "at ${at}: a string length has no leading zero"
+            BencMissingColon(at)             => "at ${at}: a string length is followed by a colon"
+            BencLengthOverrun(at, d, a)      => "at ${at}: a string of ${d} bytes, and ${a} are left"
+            BencNonStringKey(at, saw)        => "at ${at}: a dictionary key is a string, not a ${saw}"
+            BencDuplicateKey(at, key)        => "at ${at}: the key `${key}` appears twice"
+            BencDepthExceeded(at, depth)     => "at ${at}: nested deeper than ${depth} levels"
+            BencTooLarge(at, what, limit)    => "at ${at}: more than the ${what} limit of ${limit}"
+            BencTrailingBytes(at, len)       => "at ${at}: ${len} bytes follow the value"
+            BencWrongType(want, saw)         => "a ${saw} where a ${want} was asked for"
+            BencNoSuchKey(key)               => "no key `${key}`"
+            BencBadTorrent(path, why)        => "the torrent's `${path}` ${why}"
+            BencBadPieceTable(len)           => "`pieces` holds ${len} bytes, not a multiple of 20"
+            BencAmbiguousTorrentShape(why)   => "the torrent's `info` ${why}"
+            BencUnsafePath(index, component) => "file ${index}: the path component `${component}` is not safe"
 
 // The byte offset a fault was found at, or `0` for the faults that are
 // about a key or a shape rather than a position.
@@ -102,7 +119,22 @@ impl Error for BencFault
 //     println("${bencerror.offset_of(BencNegativeZero(4))}")   // 4
 // ```
 pub fn offset_of(f: BencFault) -> Int []
-    todo("bencode-nv.bencerror.offset_of")
+    match f
+        BencTruncated(at, _)        => at
+        BencUnexpectedByte(at, _)   => at
+        BencIntegerLeadingZero(at)  => at
+        BencNegativeZero(at)        => at
+        BencEmptyInteger(at)        => at
+        BencIntegerOverflow(at, _)  => at
+        BencLengthLeadingZero(at)   => at
+        BencMissingColon(at)        => at
+        BencLengthOverrun(at, _, _) => at
+        BencNonStringKey(at, _)     => at
+        BencDuplicateKey(at, _)     => at
+        BencDepthExceeded(at, _)    => at
+        BencTooLarge(at, _, _)      => at
+        BencTrailingBytes(at, _)    => at
+        _                           => 0
 
 // A short, stable name for the fault, for a metric label or a test.
 //
@@ -117,7 +149,27 @@ pub fn offset_of(f: BencFault) -> Int []
 //     println(bencerror.code_of(BencNegativeZero(4)))   // negative-zero
 // ```
 pub fn code_of(f: BencFault) -> Str []
-    todo("bencode-nv.bencerror.code_of")
+    match f
+        BencTruncated(_, _)          => "truncated"
+        BencUnexpectedByte(_, _)     => "unexpected-byte"
+        BencIntegerLeadingZero(_)    => "integer-leading-zero"
+        BencNegativeZero(_)          => "negative-zero"
+        BencEmptyInteger(_)          => "empty-integer"
+        BencIntegerOverflow(_, _)    => "integer-overflow"
+        BencLengthLeadingZero(_)     => "length-leading-zero"
+        BencMissingColon(_)          => "missing-colon"
+        BencLengthOverrun(_, _, _)   => "length-overrun"
+        BencNonStringKey(_, _)       => "non-string-key"
+        BencDuplicateKey(_, _)       => "duplicate-key"
+        BencDepthExceeded(_, _)      => "depth-exceeded"
+        BencTooLarge(_, _, _)        => "too-large"
+        BencTrailingBytes(_, _)      => "trailing-bytes"
+        BencWrongType(_, _)          => "wrong-type"
+        BencNoSuchKey(_)             => "no-such-key"
+        BencBadTorrent(_, _)         => "bad-torrent"
+        BencBadPieceTable(_)         => "bad-piece-table"
+        BencAmbiguousTorrentShape(_) => "ambiguous-torrent-shape"
+        BencUnsafePath(_, _)         => "unsafe-path"
 
 // Whether the fault is in the bytes rather than in the request.
 //
@@ -133,4 +185,7 @@ pub fn code_of(f: BencFault) -> Str []
 //     println("${bencerror.is_file_fault(BencNoSuchKey("announce"))}")   // false
 // ```
 pub fn is_file_fault(f: BencFault) -> Bool []
-    todo("bencode-nv.bencerror.is_file_fault")
+    match f
+        BencWrongType(_, _) => false
+        BencNoSuchKey(_)    => false
+        _                   => true
