@@ -27,7 +27,6 @@
 // a verdict.
 
 use std.bytes
-use bencerror
 use bencvalue
 
 // What a reader is configured with.

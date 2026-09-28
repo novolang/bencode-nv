@@ -22,7 +22,6 @@
 // component and the file it was in.
 
 use std.bytes
-use bencerror
 use bencread
 use bencvalue
 
