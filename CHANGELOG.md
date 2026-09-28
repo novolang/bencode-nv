@@ -5,6 +5,42 @@ All notable changes to bencode-nv are recorded here. The format is
 package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 with the pre-1.0 rule that a breaking change bumps the MINOR number.
 
+## [0.1.0] — 2026-09-28
+
+The first implementation of the interface published as 0.0.1.
+
+### Added
+
+- `bencread` reads into an arena of nodes, each with its span, and
+  `read` is that tree turned into values.  `validate` and `span_at`
+  walk the bytes once without building anything and check every rule
+  the tree reader checks, duplicate keys included.
+- `bencwrite` writes with every dictionary sorted as raw bytes, or as
+  it is; the sort keeps the order of equal keys.
+- `benctorrent` reads single-file and multi-file torrents, checks every
+  path component and the name, and answers the piece arithmetic.
+- `tests/differential_tests.nv`, written by `tools/differential.py`,
+  checks encodings, unsorted dictionaries and the info-hash bytes of
+  twelve torrents against Python's bencode.py 4.1.0.
+- `tests/bencedge_tests.nv` covers every refusal of both readers and a
+  torrent with every member.
+
+### Changed
+
+These break code written against 0.0.x.
+
+- `BencFault` has a new variant, `BencTooLarge(at, what, limit)`, for a
+  byte string longer than `max_string_bytes` or more values than
+  `max_values`.  The interface declared both limits and had no fault
+  for them.
+- A torrent's `name` is checked with `is_safe_component` like every
+  path component, and a name that fails is `BencUnsafePath` with index
+  `-1`.
+- `benctorrent.files_in_piece` leaves out a file of length zero, which
+  holds no piece's bytes.
+- `bencread.value_of` answers the integer 0 for a number that is not a
+  node, and `bencread.slice` an empty buffer.
+
 ## [0.0.1]
 
 **The interface, published before anyone implements it.** Every public

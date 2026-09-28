@@ -1,30 +1,25 @@
 [package]
 name        = "bencode-nv"
-version     = "0.0.1"
-description = "BEP 3 bencode, both ways, with the canonical key ordering as a writer rule and a reader question rather than something silently applied.  A second reader keeps the exact byte span of every value, because a torrent's info-hash is taken over the bytes the file HAS and not over the bytes a re-encoding would produce, and a typed .torrent reader sits on top of it.  Interface only — every body is a todo()."
+version     = "0.1.0"
+description = "BEP 3 bencode, both ways, with the canonical key ordering as a writer rule and a reader question rather than something silently applied.  A second reader keeps the exact byte span of every value, because a torrent's info-hash is taken over the bytes the file HAS and not over the bytes a re-encoding would produce, and a typed .torrent reader sits on top of it."
 license     = "Apache-2.0"
 
-# An INTERFACE release: every `pub fn` body is a `todo()`, so the
-# signatures and the effect rows are published and nothing is
-# implemented.  `novo pkg publish` recognises the shape and requires
-# both the draft stability and the 0.0.x version; the first
-# implementation is the 0.1.0 published over it.
-stability   = "draft"
+# `experimental` because no program outside this repository has used the
+# package yet, and the tests were written against the signatures rather
+# than by a consumer.
+stability   = "experimental"
 
 # `core`: arithmetic over bytes the caller already holds.  Every public
-# function declares `[]`, and the two effects a torrent package could
-# have grown are both refused.  Nothing hashes — the info-hash is a
-# SHA-1 the caller takes over the span this package hands it — and
-# nothing speaks to a tracker or a peer, which is `[net]` and a
-# different package.
+# function declares `[]`.  Nothing hashes: the info-hash is a SHA-1 the
+# caller takes over the range this package hands it.  Nothing speaks to
+# a tracker or a peer, which is `[net]` and a different package.
 #
 # A `creation date` is the integer the file holds, in Unix seconds, and
-# is never compared against a clock this package reads.
+# is never compared against a clock.
 #
-# NO `tests/embedded_probe.nv`, and the absence is a claim not made
-# rather than a claim skipped.  The value tree is one allocation per
-# node and a torrent's piece table is megabytes; neither is what a
-# microcontroller has.
+# There is no `tests/embedded_probe.nv`, because the package makes no
+# claim to build for a microcontroller: the value tree is one
+# allocation per node, and a torrent's piece table is megabytes.
 layer       = "core"
 
 category    = "encoding"
@@ -32,7 +27,8 @@ category    = "encoding"
 tags        = ["bencode", "bep-3", "torrent", "bittorrent", "info-hash", "wire-format"]
 repository  = "https://github.com/novolang/bencode-nv"
 maintainers = ["novo-lang"]
-novo        = ">= 0.9.0"
+# 0.15.0 is the toolchain this release was built and tested with.
+novo        = ">= 0.15.0"
 
 # A library: no `main`, so `novo pkg build` type-checks and
 # effect-checks every module under `src/` and writes no binary.

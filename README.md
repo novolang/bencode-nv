@@ -7,12 +7,6 @@ protocol's extension messages are made of. This package reads and writes
 it in novo-lang, and reads a `.torrent` file into typed values on top of
 it.
 
-**Status: NOT IMPLEMENTED — interface only.** Every function is declared
-with its full signature, but every body is a `todo()` that panics when
-called. The package is published so its design can be reviewed and
-depended on before it is implemented. Version 0.1.0 will be the first
-working release.
-
 ## What bencode is
 
 Four types, and nothing else.
@@ -97,7 +91,8 @@ use benctorrent
 
 fn main() [io]
     // The bytes of a .torrent file, which the caller read from disk.
-    let raw = bytes.from_str("d8:announce3:foo4:infod3:cow3:mooee")
+    let raw = bytes.from_str("d8:announce3:foo4:infod6:lengthi5e4:name5:a.txt"
+                             + "12:piece lengthi16384e6:pieces20:xxxxxxxxxxxxxxxxxxxxee")
 
     match benctorrent.read(raw)
         Err(e) => println("not a torrent: ${e.message()}")
@@ -117,10 +112,8 @@ fn main() [io]
         Ok(v)  => println("${bencvalue.len(v)} element(s)")
 ```
 
-Build and test with `novo pkg build` and `novo test`. Today `novo test`
-fails on purpose: every test reaches a
-`not implemented: bencode-nv.<module>.<fn>` panic. The tests are the
-specification the implementation will have to satisfy.
+The program prints `tracker: foo`, `name: a.txt`, `79 byte(s) to hash`
+and `2 element(s)`.
 
 ## What the package contains
 
@@ -181,9 +174,12 @@ file.
    runs past the buffer is refused before anything is allocated.
 8. **`bencread.read` refuses trailing bytes.** `bencread.read_prefix` is
    for a caller reading values back to back.
-9. **The reader has a depth limit, and it is a value.** A list head
-   costs one byte and opens a level, and a torrent file is something a
-   stranger sends you.
+9. **The reader has limits, and they are a value.** `BencLimits` bounds
+   the nesting depth, the length of one byte string and the number of
+   values. A list head costs one byte and opens a level, a declared
+   length can claim gigabytes, and a torrent file is something a
+   stranger sends you. A limit reached is `BencTooLarge` or
+   `BencDepthExceeded`.
 10. **The info-hash is taken over the file's own bytes.** Use
     `benctorrent.info_span` or `benctorrent.info_hash_input`, and hash
     them with crypto-nv. Do not re-encode.
@@ -196,7 +192,8 @@ file.
     distinction.
 13. **An unsafe path component is refused, not cleaned.** `..`, `.`, an
     empty component and one containing a separator are all
-    `BencUnsafePath`. A caller handed a cleaned path would write files
+    `BencUnsafePath`, and so is a `name` that is one of them, since a
+    client writes the name as a file or a directory. A caller handed a cleaned path would write files
     where the torrent said, having been told nothing.
 14. **`pieces` must be a whole number of twenty-byte digests.** It is
     the one corruption a torrent file can have that every other check
@@ -250,60 +247,30 @@ file.
 - [url-nv](https://novo-lang.org/packages/url-nv) parses the tracker
   URLs and the magnet links this package does not.
 
-## Test vectors
-
-The normative source is BEP 3, which gives the grammar and the four
-worked examples every implementation quotes: `i3e`, `i-3e`, `4:spam`,
-`l4:spam4:eggse` and `d3:cow3:moo4:spam4:eggse`.
-
-The oracles are the Rust crate **bendy** and the Python **bencodepy**,
-each of which ships a refusal suite beside the grammar: a leading zero,
-a negative zero, a length with a leading zero, a truncated string, a
-non-string key, a duplicate key. The cases in this package's suite are
-those.
-
-The round-trip corpus that becomes a generated run beside them is a
-directory of real `.torrent` files, where the assertion is that the
-SHA-1 of `benctorrent.info_span` matches the info-hash the file is
-known by — which is the only test that catches a package that
-re-encodes when it should not.
+## Tests
 
 ```bash
-novo test tests/bencode_tests.nv    # the grammar, the spans, the torrent
+novo test tests/bencode_tests.nv        # the grammar, the spans, the torrent
+novo test tests/bencedge_tests.nv       # every refusal of both readers, and a full torrent
+novo test tests/differential_tests.nv   # against Python's bencode.py
+bash tests/coverage.sh                  # line coverage over src/, merged across the suites
 ```
 
-The suite asserts BEP 3's four examples, that `i03e` and `i-0e` are
-refused, that a duplicate key is refused and an unsorted dictionary is
-not, that the order a file had is kept, that keys sort as raw bytes so
-`"Z"` precedes `"a"`, that every node remembers its span and the slice
-is the original bytes, that `info_span` finds the right range, that a
-`pieces` of twenty-five bytes is refused, and that a `..` path
-component is refused rather than cleaned.
+The normative source is BEP 3, which gives the grammar and the worked
+examples every implementation quotes: `i3e`, `i-3e`, `4:spam`,
+`l4:spam4:eggse` and `d3:cow3:moo4:spam4:eggse`. The refusals are the
+ones the Rust crate bendy and the Python bencodepy test: a leading
+zero, a negative zero, a length with a leading zero, a truncated
+string, a non-string key and a duplicate key.
 
-The tests compile today and fail at run, each on the
-`not implemented: bencode-nv.<module>.<fn>` panic that is its body.
-That is the expected state of an interface release. They turn green one
-at a time as bodies land.
-
-## Implementation status
-
-| Item | Implemented |
-| --- | --- |
-| `bencvalue.BencValue`, `bencread.BencTree`, `benctorrent.BencTorrent` and the other types | the types are declared |
-| `bencerror.offset_of`, `.code_of`, `.is_file_fault`, `BencFault.message` | no |
-| `bencvalue.type_name`, `.text`, `.entry`, `.dict`, `.dict_of`, `.append`, `.len` | no |
-| `bencvalue.as_int`, `.as_bytes`, `.as_str`, `.as_list`, `.as_dict`, `.key_str` | no |
-| `bencvalue.get`, `.lookup`, `.has`, `.keys`, `.keys_sorted`, `.path` | no |
-| `bencread.default_limits`, `.read`, `.read_with`, `.read_prefix`, `.validate` | no |
-| `bencread.read_tree`, `.read_tree_with`, `.root`, `.node_count`, `.node` | no |
-| `bencread.child`, `.node_at`, `.slice`, `.value_of`, `.span_at`, `.context` | no |
-| `bencwrite.encoded_len`, `.write`, `.write_as_is`, `.canonical` | no |
-| `bencwrite.is_canonical`, `.first_difference`, `.key_before` | no |
-| `benctorrent.info_span`, `.info_hash_input` | no |
-| `benctorrent.read`, `.from_value`, `.info_from_value`, `.to_value` | no |
-| `benctorrent.total_length`, `.piece_count`, `.piece_hash`, `.piece_size`, `.files_in_piece` | no |
-| `benctorrent.trackers`, `.is_trackerless`, `.is_safe_component` | no |
-| `benctorrent.empty_info`, `.empty_torrent` | no |
+The differential suite is written by `tools/differential.py` from
+Python's bencode.py 4.1.0, an independent implementation whose encoder
+sorts keys as BEP 3 requires. It checks that 40 of its encodings read
+and write back unchanged, that 20 encodings with unsorted dictionaries
+are kept as they are and sorted on request, with the first differing
+offset found, and that 12 torrent files, four of them with an `info`
+dictionary out of order, give the exact bytes the info-hash is taken
+over.
 
 ## Licence
 
