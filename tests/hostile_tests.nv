@@ -1,0 +1,47 @@
+// tests/hostile_tests.nv — torrents whose declared sizes overflow the piece arithmetic.
+
+use std.test
+use std.bytes
+use std.str
+use benctorrent
+
+fn b(s: Str) -> Bytes
+    bytes.from_str(s)
+
+fn sixty() -> Str
+    str.repeat("a", 60)
+
+fn refused(src: Str) -> Bool
+    match benctorrent.read(b(src))
+        Ok(_)  => false
+        Err(_) => true
+
+@test
+fn test_file_lengths_that_sum_past_int_are_refused()
+    let src = "d4:infod5:filesld6:lengthi9223372036854775807e4:pathl1:aeed6:lengthi5e4:pathl1:beee"
+            + "4:name1:x12:piece lengthi1e6:pieces0:ee"
+    test.assert(refused(src))
+
+@test
+fn test_a_negative_file_length_is_refused()
+    let src = "d4:infod6:lengthi-1e4:name1:x12:piece lengthi1e6:pieces0:ee"
+    test.assert(refused(src))
+
+@test
+fn test_a_negative_piece_length_is_refused()
+    let src = "d4:infod6:lengthi1e4:name1:x12:piece lengthi-4e6:pieces0:ee"
+    test.assert(refused(src))
+
+@test
+fn test_a_piece_length_times_the_piece_count_past_int_is_refused()
+    let src = "d4:infod6:lengthi1e4:name1:x12:piece lengthi9223372036854775807e6:pieces60:" + sixty() + "ee"
+    test.assert(refused(src))
+
+@test
+fn test_an_honest_torrent_still_reads_and_measures()
+    let src = "d4:infod6:lengthi70e4:name1:x12:piece lengthi32e6:pieces60:" + sixty() + "ee"
+    match benctorrent.read(b(src))
+        Err(e) => test.fail(e.message())
+        Ok(t)  =>
+            test.assert_eq(benctorrent.total_length(t.info), 70)
+            test.assert_eq(benctorrent.piece_size(t.info, 2), 6)

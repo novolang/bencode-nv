@@ -5,6 +5,12 @@ All notable changes to bencode-nv are recorded here. The format is
 package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 with the pre-1.0 rule that a breaking change bumps the MINOR number.
 
+## Unreleased
+
+### Fixed
+
+- A torrent whose piece length or file length is negative, whose file lengths sum past 63 bits, or whose piece length times the piece count exceeds 63 bits is refused instead of overflowing the piece arithmetic.
+
 ## [0.1.0] — 2026-09-28
 
 The first implementation of the interface published as 0.0.1.

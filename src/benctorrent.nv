@@ -275,8 +275,26 @@ pub fn info_from_value(v: BencValue) -> Result<BencInfo, BencFault> []
         list.push(files, BencFile { path: [name], length: length })
     else
         files = files_of(required(v, "files", "info.files")!)!
+    check_sizes(piece_length, bytes.len(pieces) / 20, files)!
     Ok(BencInfo { name: name, piece_length: piece_length, pieces: pieces, is_private: private, files: files,
                   is_single_file: has_length })
+
+// The sizes the piece arithmetic multiplies and adds: none is negative, the file lengths sum
+// within Int, and a piece length times the piece count stays within Int.
+fn check_sizes(piece_length: Int, pieces: Int, files: [BencFile]) -> Result<Int, BencFault>
+    let most = 9223372036854775807
+    if piece_length < 0
+        return Err(bad("info.piece length", "is negative"))
+    var total = 0
+    for f in files
+        if f.length < 0
+            return Err(bad("info.length", "is negative"))
+        if f.length > most - total
+            return Err(bad("info.length", "makes the total length exceed 63 bits"))
+        total += f.length
+    if pieces > 1 and piece_length > most / (pieces - 1)
+        return Err(bad("info.piece length", "times the piece count exceeds 63 bits"))
+    Ok(total)
 
 // The files of a multi-file torrent, every path component checked.
 fn files_of(v: BencValue) -> Result<[BencFile], BencFault>
