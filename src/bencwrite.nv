@@ -61,7 +61,7 @@ fn emit(v: BencValue, sorted: Bool, var parts: [Bytes])
         BencList(items)   =>
             list.push(parts, bytes.from_str("l"))
             for item in items
-                emit(item, sorted, parts)
+                emit(item, sorted, var parts)
             list.push(parts, bytes.from_str("e"))
         BencDict(entries) =>
             list.push(parts, bytes.from_str("d"))
@@ -71,7 +71,7 @@ fn emit(v: BencValue, sorted: Bool, var parts: [Bytes])
             for e in order
                 list.push(parts, bytes.from_str("${bytes.len(e.key)}:"))
                 list.push(parts, bytes.clone(e.key))
-                emit(e.value, sorted, parts)
+                emit(e.value, sorted, var parts)
             list.push(parts, bytes.from_str("e"))
 
 // A dictionary's entries in BEP 3's order, keeping the relative order
@@ -100,7 +100,7 @@ fn sort_entries(entries: [BencEntry]) -> [BencEntry]
 // ```
 pub fn write(v: BencValue) -> Bytes []
     var parts: [Bytes] = []
-    emit(v, true, parts)
+    emit(v, true, var parts)
     bytes.concat(parts)
 
 // The value's bytes, with every dictionary left in the order it is in.
@@ -117,7 +117,7 @@ pub fn write(v: BencValue) -> Bytes []
 // ```
 pub fn write_as_is(v: BencValue) -> Bytes []
     var parts: [Bytes] = []
-    emit(v, false, parts)
+    emit(v, false, var parts)
     bytes.concat(parts)
 
 // The value with every dictionary's keys sorted, at every depth.

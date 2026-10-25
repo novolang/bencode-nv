@@ -20,6 +20,7 @@
 // `bencwrite.canonical` is where sorting happens.
 
 use std.bytes
+use bencerror
 
 // A bencode value.
 //

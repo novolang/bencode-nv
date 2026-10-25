@@ -24,6 +24,7 @@
 use std.bytes
 use bencread
 use bencvalue
+use bencerror
 
 // One file of a torrent.
 //

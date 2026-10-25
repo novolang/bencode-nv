@@ -1,6 +1,6 @@
 [package]
 name        = "bencode-nv"
-version     = "0.1.0"
+version     = "0.1.1"
 description = "BEP 3 bencode, both ways, with the canonical key ordering as a writer rule and a reader question rather than something silently applied.  A second reader keeps the exact byte span of every value, because a torrent's info-hash is taken over the bytes the file HAS and not over the bytes a re-encoding would produce, and a typed .torrent reader sits on top of it."
 license     = "Apache-2.0"
 
@@ -28,7 +28,7 @@ tags        = ["bencode", "bep-3", "torrent", "bittorrent", "info-hash", "wire-f
 repository  = "https://github.com/novolang/bencode-nv"
 maintainers = ["novo-lang"]
 # 0.15.0 is the toolchain this release was built and tested with.
-novo        = ">= 0.15.0"
+novo        = ">= 0.21.1"
 
 # A library: no `main`, so `novo pkg build` type-checks and
 # effect-checks every module under `src/` and writes no binary.

@@ -28,6 +28,7 @@
 
 use std.bytes
 use bencvalue
+use bencerror
 
 // What a reader is configured with.
 //
@@ -214,7 +215,7 @@ fn build(src: Bytes, at: Int, depth: Int, limits: BencLimits,
             list.push(keys, key)
             i = k.to
         list.push(children, list.len(b.nodes))
-        i = build(src, i, depth + 1, limits, b)!
+        i = build(src, i, depth + 1, limits, var b)!
     b.nodes[index] = BencNode { kind: kind_at(c), span: BencSpan { from: at, to: i + 1 }, int_value: 0,
                                 bytes_value: bytes.zeros(0), children: children, keys: keys }
     Ok(i + 1)
@@ -222,7 +223,7 @@ fn build(src: Bytes, at: Int, depth: Int, limits: BencLimits,
 // The tree of the value at the front of `src`, and where it ended.
 fn tree_prefix(src: Bytes, limits: BencLimits) -> Result<BencPrefixTree, BencFault>
     var b = Build { nodes: [], values: 0 }
-    let end = build(src, 0, 0, limits, b)!
+    let end = build(src, 0, 0, limits, var b)!
     Ok(BencPrefixTree { tree: BencTree { nodes: b.nodes, source: src }, end: end })
 
 // A tree read from the front of a buffer, and where it ended.
@@ -322,7 +323,7 @@ pub struct BencPrefix
 // ```
 pub fn validate(src: Bytes) -> Result<Bool, BencFault> []
     var s = Scan { values: 0, from: -1, to: -1 }
-    let end = scan(src, 0, 0, default_limits(), s, [], -1)!
+    let end = scan(src, 0, 0, default_limits(), var s, [], -1)!
     check_end(src, end)!
     Ok(true)
 
@@ -629,7 +630,7 @@ fn scan(src: Bytes, at: Int, depth: Int, limits: BencLimits, var s: Scan, want: 
                 if matched >= 0 and matched < list.len(want) and is_key(src, k, want[matched])
                     next = matched + 1
                 i = k.to
-            i = scan(src, i, depth + 1, limits, s, want, next)!
+            i = scan(src, i, depth + 1, limits, var s, want, next)!
         end = i + 1
     else
         return Err(BencUnexpectedByte(at, c))
@@ -658,7 +659,7 @@ fn scan(src: Bytes, at: Int, depth: Int, limits: BencLimits, var s: Scan, want: 
 // ```
 pub fn span_at(src: Bytes, keys: [Str]) -> Result<?BencSpan, BencFault> []
     var s = Scan { values: 0, from: -1, to: -1 }
-    let end = scan(src, 0, 0, default_limits(), s, keys, 0)!
+    let end = scan(src, 0, 0, default_limits(), var s, keys, 0)!
     check_end(src, end)!
     if s.from < 0
         return Ok(None)
